@@ -7,7 +7,7 @@ INCLUDES := $(wildcard *.h)
 OBJECTS  := $(SOURCES:%.c=%.o)
 
 LISTENER_SOURCES := listener.c
-SENDER_SOURCES   := traceroute.c
+SENDER_SOURCES   := sender.c
 COMMON_SOURCES   := dbg-util.c util.c
 
 LISTENER_OBJECTS := $(LISTENER_SOURCES:.c=.o)

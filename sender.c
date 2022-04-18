@@ -21,7 +21,7 @@
 #include <sys/uio.h>
 #include <unistd.h>
 #include "util.h"
-#include "traceroute.h"
+#include "sender.h"
 
 #ifdef __linux__
 #  if defined IPV6_RECVPKTINFO
