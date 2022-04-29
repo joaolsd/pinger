@@ -23,6 +23,10 @@
 #include "util.h"
 #include "sender.h"
 
+
+#include <net/if.h>
+#include <sys/ioctl.h>
+
 #ifdef __linux__
 #  if defined IPV6_RECVPKTINFO
 #    include <linux/version.h>
@@ -82,10 +86,8 @@ int main (int argc, char const *argv[])
   struct sockaddr_in   from4, to4;
   struct sockaddr_in6  from6, to6;
   
-  // int rcvsock;  /* receive (icmp) socket file descriptor */
-  int sndsock;  /* send (udp) socket file descriptor */
+  int sndsock;  /* send socket file descriptor */
   
-  // int rcvsock4, rcvsock6;
   int sndsock4, sndsock6;
   int v4sock_errno = 0;
   int v6sock_errno = 0;
@@ -107,7 +109,7 @@ int main (int argc, char const *argv[])
 	
   char *progname = basename((char *)argv[0]);
   
-  while ((ch = getopt(argc, (char * const *)argv, "h6i")) != (char)-1)
+  while ((ch = getopt(argc, (char * const *)argv, "h6ti")) != (char)-1)
     switch (ch) {
       case 'h':
         usage(progname);
@@ -118,6 +120,9 @@ int main (int argc, char const *argv[])
       case 'i':
         conf->proto = IPPROTO_ICMP;
         break;
+      case 't':
+          conf->proto = IPPROTO_TCP;
+          break;
       default:
         ;
     }
@@ -177,28 +182,6 @@ int main (int argc, char const *argv[])
         "addresses; using %s", hostname, hbuf);
   }
 
-
-// // IPv4
-//   if (addr.ss_family == AF_INET) {
-// #ifdef HAVE_IP_PKTINFO
-//     // If on Linux
-//     proto = SOL_IP;
-//     flag = IP_PKTINFO;
-// #endif
-// #ifdef IP_RECVDSTADDR
-//     proto = IPPROTO_IP;
-//     // Set IP_RECVDSTADDR option (*BSD)
-//     flag = IP_RECVDSTADDR;
-// #endif
-//   } else if (addr.ss_family == AF_INET6) {
-// // IPv6
-// #ifdef IPV6_PKTINFO
-//     proto = IPPROTO_IPV6;
-//     flag = SSO_IPV6_RECVPKTINFO;
-// #endif
-//   }
-//   return setsockopt(socket, proto, flag, &enable, sizeof(enable));
-
   if (v6flag) {
     #ifdef IPV6_PKTINFO
         proto = IPPROTO_IPV6;
@@ -215,9 +198,6 @@ int main (int argc, char const *argv[])
     }
 
     sndsock = sndsock6;
-    if (sndsock4 >= 0) {
-      close(sndsock4);
-    }
   } else {
     #ifdef HAVE_IP_PKTINFO
         // If on Linux
@@ -230,7 +210,7 @@ int main (int argc, char const *argv[])
         flag = IP_RECVDSTADDR;
     #endif
     
-    if ((sndsock4 = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
+    if ((sndsock4 = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
       v4sock_errno = errno;
       perror("Can't open send socket");
     }
@@ -240,19 +220,9 @@ int main (int argc, char const *argv[])
       }
       
       sndsock = sndsock4;
-      if (sndsock6 >= 0)
-      close(sndsock6);
   }
 
 	printf("Send socket: %d\n", sndsock);
-  // if (v6flag) {
-  //   /* specify to tell receiving interface */
-  //   if (setsockopt(rcvsock, proto, flag, &enable, sizeof(enable)))
-  //     err(1, "setsockopt(IPV6_RECVPKTINFO)");
-  //   /* specify to tell hoplimit field of received IP6 hdr */
-  //   if (setsockopt(rcvsock, proto, flag, &enable, sizeof(enable)))
-  //     err(1, "setsockopt(IPV6_RECVHOPLIMIT)");
-  // }
   int seq = 0;
   int ttl = 1;
   char addr_str[256];
@@ -261,6 +231,7 @@ int main (int argc, char const *argv[])
   } else {
     printf("Sending probe to %s, %s\n", hostname, inet_ntop(AF_INET, &(((struct sockaddr_in *)to)->sin_addr), addr_str, 256));    
   }
+
   send_probe(conf, sndsock, seq, ttl, to, from);
   // send_probe(conf, sndsock, seq, 64, to, from);
 

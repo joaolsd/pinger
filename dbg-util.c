@@ -123,6 +123,7 @@ void print_icmp_header(const u_char *buffer) {
   
   char *icmp_type[19];
   char *icmp_code[19][16];
+  char *code_str;
   
   icmp_type[0] = "ICMP_ECHOREPLY";       // Echo Reply
   icmp_type[3] = "ICMP_DEST_UNREACH";    // Destination Unreachable
@@ -167,9 +168,15 @@ void print_icmp_header(const u_char *buffer) {
   icmp_code[TIME_EXCEEDED][0] = "TTL count exceeded";            // ICMP_EXC_TTL
   icmp_code[TIME_EXCEEDED][1] = "Fragment Reass time exceeded";  // ICMP_EXC_FRAGTIME
 
+  if (icmp_header->type <= 2) {
+    code_str = icmp_code[icmp_header->type][icmp_header->code];
+  } else {
+    code_str = "";
+  }
+
   printf("ICMPv4 Header:\n");
   printf(" Type:       %s (%u)\n", icmp_type[icmp_header->type], (uint8_t)icmp_header->type);
-  printf(" Code:       %s (%u) \n", icmp_code[icmp_header->type][icmp_header->code], (unsigned int)icmp_header->code);
+  printf(" Code:       %s (%u) \n", code_str, (unsigned int)icmp_header->code);
   printf(" Checksum:   %u \n",(unsigned int)icmp_header->checksum);
 }
 

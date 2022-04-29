@@ -14,6 +14,7 @@
 #include <netinet/ip6.h>
 #include <netinet/ip_icmp.h>
 #include <netinet/udp.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 
 #include "dbg-util.h"
@@ -25,6 +26,7 @@
 #define IP_HDR_LEN 20
 #define IP6_HDR_LEN 40
 #define UDP_HDR_LEN 8
+#define TCP_HDR_LEN 20
 #define ICMP_HDRLEN 4  // ICMP header length for echo request, excludes data
 #define ICMP6_HDRLEN 4  // ICMP header length for echo request, excludes data
 
@@ -238,14 +240,58 @@ void build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacke
   struct iphdr *ip = (struct iphdr *)(outpacket + ETH_HDRLEN); // offset by ethernet header length
   u_char *p = ((u_char *)ip) + IP_HDR_LEN;
   struct udphdr *udphdr = (struct udphdr *)(p);
+  struct tcphdr *tcphdr = (struct tcphdr *)(p);
   struct icmp *icmp_pkt = (struct icmp *)(p);
   struct packetdata *op;
   struct timespec ts;
 
+  uint16_t frame_len;
+
   ether_header(4, outpacket);
 
-	uint16_t frame_len = ETH_HDRLEN + IP_HDR_LEN + UDP_HDR_LEN + sizeof(struct packetdata);
- 
+  switch (conf->proto) {
+  case IPPROTO_ICMP:
+    ip->protocol = IPPROTO_ICMP;
+    frame_len = ETH_HDRLEN + IP_HDR_LEN + ICMP_HDRLEN + sizeof(struct packetdata);
+    icmp_pkt->icmp_type = icmp_type;
+    icmp_pkt->icmp_code = ICMP_CODE;
+    icmp_pkt->icmp_seq = seq;
+    icmp_pkt->icmp_id = conf->ident;
+    op = (struct packetdata *)(icmp_pkt + 1);
+    break;
+  case IPPROTO_UDP:
+    ip->protocol = IPPROTO_UDP;
+    frame_len = ETH_HDRLEN + IP_HDR_LEN + UDP_HDR_LEN + sizeof(struct packetdata);
+    udphdr->uh_sport = conf->ident;
+    udphdr->uh_dport = conf->port+seq; // Increment port with each step
+    udphdr->uh_ulen = htons(frame_len - ETH_HDRLEN - sizeof(struct ip));
+    udphdr->uh_sum = 0;
+    op = (struct packetdata *)(udphdr + 1);
+    break;
+  case IPPROTO_TCP:
+    ip->protocol = IPPROTO_TCP;
+    frame_len = ETH_HDRLEN + IP_HDR_LEN + TCP_HDR_LEN + sizeof(struct packetdata);
+    tcphdr->source = htons(conf->ident);
+    tcphdr->dest = htons(conf->port+seq); // Increment port with each step
+    tcphdr->seq = htonl(1234567);
+    tcphdr->ack_seq = 0;
+    tcphdr->doff=5;
+    tcphdr->fin=0;
+    tcphdr->syn=0;
+    tcphdr->rst=0;
+    tcphdr->psh=0;
+    tcphdr->ack=0;
+    tcphdr->urg=0;
+    tcphdr->window = 5;
+    tcphdr->check = 0;
+    tcphdr->urg_ptr = 0;
+    op = (struct packetdata *)(tcphdr + 1);
+    break;    
+  default:
+    op = (struct packetdata *)(ip + 1);
+    break;
+  }
+  
   ip->version = 4;
   ip->ihl = 5;
 	ip->tos = 0;
@@ -256,28 +302,7 @@ void build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacke
 	ip->check = 0;
   ip->saddr = from->sin_addr.s_addr;
   ip->daddr = to->sin_addr.s_addr;
- 	
-  switch (conf->proto) {
-  case IPPROTO_ICMP:
-		ip->protocol = IPPROTO_ICMP;
-    icmp_pkt->icmp_type = icmp_type;
-    icmp_pkt->icmp_code = ICMP_CODE;
-    icmp_pkt->icmp_seq = seq;
-    icmp_pkt->icmp_id = conf->ident;
-    op = (struct packetdata *)(icmp_pkt + 1);
-    break;
-  case IPPROTO_UDP:
-		ip->protocol = IPPROTO_UDP;
-    udphdr->uh_sport = conf->ident;
-    udphdr->uh_dport = conf->port+seq; // Increment port with each step
-    udphdr->uh_ulen = htons(frame_len - ETH_HDRLEN - sizeof(struct ip));
-    udphdr->uh_sum = 0;
-    op = (struct packetdata *)(udphdr + 1);
-    break;
-  default:
-    op = (struct packetdata *)(ip + 1);
-    break;
-  }
+  
 	ip->check = htons(checksum((uint16_t *)ip, sizeof(struct iphdr)));
 	
   op->seq = seq;
@@ -298,6 +323,9 @@ void build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacke
 	if (conf->proto == IPPROTO_UDP) {
 		udphdr->uh_sum = udp_checksum_ipv4((uint16_t *)udphdr, UDP_HDR_LEN + sizeof(struct packetdata), UDP_HDR_LEN + sizeof(struct packetdata), (uint32_t *)&ip->saddr, (uint32_t *)&ip->daddr);
 	}
+  if (conf->proto == IPPROTO_TCP) {
+    tcphdr->check =  tcp_checksum_ipv4(tcphdr, TCP_HDR_LEN + sizeof(struct packetdata), TCP_HDR_LEN + sizeof(struct packetdata), &ip->saddr, &ip->daddr);
+  }
 }
 
 void build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacket, struct sockaddr_in6 *to, struct sockaddr_in6 *from, int sndsock) {
@@ -306,11 +334,10 @@ void build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpack
   struct packetdata *op;
   int i,status;
   int datalen = 0;
-    
+  uint16_t frame_len;
+
   ether_header(6, outpacket);
   
-	uint16_t frame_len = ETH_HDRLEN + IP_HDR_LEN + UDP_HDR_LEN + sizeof(struct packetdata);
-
   struct ip6_hdr *ip6 = (struct ip6_hdr *)(outpacket + ETH_HDRLEN);
   // IPv6 version (4 bits), Traffic class (8 bits), Flow label (20 bits)
   ip6->ip6_flow = htonl((6 << 28) | (0 << 20) | 0);
@@ -347,6 +374,7 @@ void build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpack
     case IPPROTO_ICMP:
       // Next header (8 bits): 58 for ICMP
       ip6->ip6_nxt = IPPROTO_ICMPV6;
+      frame_len = ETH_HDRLEN + IP6_HDR_LEN + ICMP6_HDRLEN + sizeof(struct packetdata);
       // struct icmp6_hdr *icp = (struct icmp6_hdr *)(outpacket+ETH_HDRLEN+IP6_HDR_LEN);
       icp->icmp6_type = htons(ICMP6_ECHO_REQUEST);
       icp->icmp6_code = 0;
@@ -359,6 +387,7 @@ void build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpack
     case IPPROTO_UDP:
       // Next header (8 bits)
       ip6->ip6_nxt = IPPROTO_UDP;
+      frame_len = ETH_HDRLEN + IP6_HDR_LEN + UDP_HDR_LEN + sizeof(struct packetdata);
       udphdr->uh_sport = htons(conf->ident);
       udphdr->uh_dport = htons(conf->port+seq);
       udphdr->uh_ulen = htons(frame_len - ETH_HDRLEN - sizeof(struct ip6_hdr));
@@ -384,6 +413,20 @@ void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct
   uint8_t outpacket[1514];
   icmp_type = ICMP_ECHO; /* default ICMP code/type */
   
+  // int x;
+  // struct ifreq ifreq;
+  // memset(&ifreq,0,sizeof(ifreq));
+  // strncpy(ifreq.ifr_name, "eth0", IFNAMSIZ-1); //giving name of Interface
+
+  // printf("######PRE:\n");
+  // for(x = 1; x < 3; x++){
+  //         ifreq.ifr_ifindex = x;
+  //         if(ioctl(sndsock, SIOCGIFNAME, &ifreq) < 0 )
+  //                 perror("ioctl SIOCGIFNAME error");
+  //         printf("index %d is %s\n", x, ifreq.ifr_name);
+  // }
+
+
   switch (to->sa_family) {
   case AF_INET:
     printf("IPv4\n");
@@ -407,28 +450,40 @@ void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct
   if (v6flag) {
     print_ipv6_header((const u_char *)outpacket+ETH_HDRLEN);
     if (conf->proto == IPPROTO_ICMP) {
-      print_icmp6_header((const u_char *)outpacket+ETH_HDRLEN+IP6_HDR_LEN);      
-    } else {
-    	print_udp_header((const u_char *)outpacket+ETH_HDRLEN+IP6_HDR_LEN);
+      print_icmp6_header((const u_char *)outpacket+ETH_HDRLEN+IP6_HDR_LEN);
+    } else if (conf->proto == IPPROTO_UDP) {
+      print_udp_header((const u_char *)outpacket+ETH_HDRLEN+IP6_HDR_LEN);
+    } else if (conf->proto == IPPROTO_TCP) {
+      print_tcp_header((const u_char *)outpacket+ETH_HDRLEN+IP6_HDR_LEN);
     }
   } else {
     print_ipv4_header((const u_char *)outpacket+ETH_HDRLEN);
     if (conf->proto == IPPROTO_ICMP) {
-      printf("TODO: print IPv4 icmp header\n");
-    } else {
-    	print_udp_header((const u_char *)outpacket+ETH_HDRLEN+IP_HDR_LEN);
+      print_icmp_header((const u_char *)outpacket+ETH_HDRLEN+IP_HDR_LEN);
+    } else if (conf->proto == IPPROTO_UDP) {
+      print_udp_header((const u_char *)outpacket+ETH_HDRLEN+IP_HDR_LEN);
+    } else if (conf->proto == IPPROTO_TCP) {
+      print_tcp_header((const u_char *)outpacket+ETH_HDRLEN+IP_HDR_LEN);
     }
+
   }
 	
-	struct ifreq ifreq_i;
-	memset(&ifreq_i,0,sizeof(ifreq_i));
-	strncpy(ifreq_i.ifr_name, "eth0", IFNAMSIZ-1); //giving name of Interface
- 
+  struct ifreq ifreq_i;
+  char *if_name = "eth0";
+  int if_name_len = strlen(if_name);
+
+  memset(&ifreq_i,0,sizeof(ifreq_i));
+  if (if_name_len<sizeof(ifreq_i.ifr_name)) {
+    strncpy(ifreq_i.ifr_name, if_name, if_name_len); //giving name of Interface
+  } else {
+      perror("interface name is too long");
+  }
+
 	if((ioctl(sndsock,SIOCGIFINDEX,&ifreq_i))<0) {
-    printf("error in index ioctl reading");//getting Index Name
+    perror("error in index ioctl reading");//getting Index Name
 	}
  
- 	char ifname[256];
+  char ifname[256];
 	printf("interface index=%d, interface: %s\n",ifreq_i.ifr_ifindex, if_indextoname(ifreq_i.ifr_ifindex, ifname));
   
 	struct sockaddr_ll sadr_ll;
