@@ -216,6 +216,8 @@ udp_checksum_ipv4(const void *buff, size_t len, size_t length, in_addr_t *src_ad
   return((uint16_t)(~sum));
 }
 
+/***************************************************/
+
 void ether_header(int IP_v, uint8_t *outpacket) {
   uint16_t ether_type;
 
@@ -235,6 +237,8 @@ void ether_header(int IP_v, uint8_t *outpacket) {
   }
   memcpy(outpacket + 12, &ether_type, 2);
 }
+
+/***************************************************/
 
 void build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket, struct sockaddr_in *to, struct sockaddr_in *from) {
   struct iphdr *ip = (struct iphdr *)(outpacket + ETH_HDRLEN); // offset by ethernet header length
@@ -262,7 +266,8 @@ void build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacke
   case IPPROTO_UDP:
     ip->protocol = IPPROTO_UDP;
     frame_len = ETH_HDRLEN + IP_HDR_LEN + UDP_HDR_LEN + sizeof(struct packetdata);
-    udphdr->uh_sport = conf->ident;
+    // udphdr->uh_sport = conf->ident;
+    udphdr->uh_sport = 443;
     udphdr->uh_dport = conf->port+seq; // Increment port with each step
     udphdr->uh_ulen = htons(frame_len - ETH_HDRLEN - sizeof(struct ip));
     udphdr->uh_sum = 0;
@@ -328,6 +333,8 @@ void build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacke
   }
 }
 
+/***************************************************/
+
 void build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacket, struct sockaddr_in6 *to, struct sockaddr_in6 *from, int sndsock) {
 
   struct timespec ts;
@@ -361,10 +368,10 @@ void build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpack
   ip6->ip6_src = from->sin6_addr;
   ip6->ip6_dst = to->sin6_addr;
 
-  i = hops;
-  if (setsockopt(sndsock, IPPROTO_IPV6, IPV6_UNICAST_HOPS, (char *)&i, sizeof(i)) == -1) {
-    warn("setsockopt IPV6_UNICAST_HOPS");
-  }
+  // i = hops;
+  // if (setsockopt(sndsock, IPPROTO_IPV6, IPV6_UNICAST_HOPS, (char *)&i, sizeof(i)) == -1) {
+  //   warn("setsockopt IPV6_UNICAST_HOPS");
+  // }
 
   u_char *p = ((u_char *)ip6) + IP6_HDR_LEN;
   struct udphdr *udphdr = (struct udphdr *)(p);
@@ -406,6 +413,8 @@ void build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpack
     err(1, "clock_gettime(CLOCK_MONOTONIC)");
 	}
 }
+
+/***************************************************/
 
 void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct sockaddr *to, struct sockaddr *from) {
   int len, addr_len;
