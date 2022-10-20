@@ -190,12 +190,11 @@ int main (int argc, char const *argv[])
 	conf->port = 33434;
 	conf->ident = 666;
 	
-  char buffer[128];
   char *progname = basename((char *)argv[0]);
   
   char *input_f;
   char *lineptr;
-  lineptr = calloc(256, 1);
+  lineptr = calloc(128, 1);
   
   while ((ch = getopt(argc, (char * const *)argv, "df:h6ti")) != (char)-1) {
     // char *optarg;
@@ -271,19 +270,22 @@ int main (int argc, char const *argv[])
   do {
     if (file_input) {
       if (is_daemon) {
-        if (read(new_fd, buffer, sizeof(buffer)) == -1) {
+        if (read(new_fd, lineptr, sizeof(lineptr)) == -1) {
           if (errno == EAGAIN) {
             continue;
           }
           perror("Error reading from socket");
         }
-        printf("read new data: %s\n", buffer);
-        dest = buffer+6; // address starts at string position 6
-        *(buffer+5) = 0; // Null terminate at position 6 for atoi below
-        conf->port = atoi(buffer);
-        fprintf(stderr, "Address: %s, Port: %d\n", dest, conf->port);
+        printf("read new data: %s\n", lineptr);
+        // dest = buffer; // first item in the line is the IP address
+        // conf->port = atoi(buffer+strlen(dest)+2);
+        dest = strtok(lineptr, ","); // first item in the line is the IP address
+        conf->port = atoi(strtok(NULL,",")); // and the port comes after the comma
+        if (ret != 2) {
+          fprintf(stderr, "Address: %s, Port: %d\n", dest, conf->port);
+        }
       } else {
-        size_t n = 256;
+        size_t n = 128;
         ret = getline(&lineptr, &n, file);
         if (ret == -1) {
           exit(0);

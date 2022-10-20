@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS= -g
-LFLAGS=
+LFLAGS= -lpcap
 
 SOURCES  := $(wildcard *.c)
 INCLUDES := $(wildcard *.h)
