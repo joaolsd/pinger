@@ -12,7 +12,6 @@
 #include <limits.h>
 #include <netdb.h>
 #include <linux/if_ether.h>
-#endif
 #include <pcap.h>
 
 #include <netinet/icmp6.h>
@@ -24,7 +23,7 @@
 #include <netinet/tcp.h>
 #include <pwd.h>
 #include <sys/socket.h>
-// #include <sys/sysctl.h>
+// #include <sys/sysctl.h>2332323
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -201,7 +200,7 @@ void  daemonise() {
 }
 
 /*****************************************/
-int main (int argc, char const *argv[])
+int main (int argc, char * const argv[])
 {
   int ch ;
 

@@ -1,0 +1,18 @@
+[Unit]
+Description=yarrp-server
+
+After=syslog.target network.target
+Before=nginx.service
+PartOf=nginx.service
+
+[Service]
+Type=forking
+#PIDFile=
+ExecStartPre=
+ExecStart=/usr/local/bin/sender -d
+ExecReload=/usr/local/bin/sender -d
+ExecStop=/usr/bin/pkill sender
+
+[Install]
+WantedBy=multi-user.target
+
