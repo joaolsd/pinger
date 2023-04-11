@@ -7,11 +7,10 @@
 
 #include <libgen.h>
 #include <arpa/inet.h>
+#include <err.h>
+#include <errno.h>
 #include <limits.h>
 #include <netdb.h>
-#if __APPLE__
-#include <netinet/if_ether.h>
-#elif __linux__
 #include <linux/if_ether.h>
 #endif
 #include <pcap.h>
@@ -38,6 +37,7 @@
 #define SNAP_LEN 8192
 
 #define ETH_HDRLEN 14
+
 #define IP_HDR_LEN 20
 #define IP6_HDR_LEN 40
 #define ICMP_HDR_LEN 8
@@ -201,7 +201,7 @@ void  daemonise() {
 }
 
 /*****************************************/
-int main (int argc, char **argv)
+int main (int argc, char const *argv[])
 {
   int ch ;
 
