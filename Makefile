@@ -2,6 +2,8 @@ CC=gcc
 CFLAGS= -g
 LFLAGS= -lpcap
 
+INSTALL=/usr/bin/install
+
 SOURCES  := $(wildcard *.c)
 INCLUDES := $(wildcard *.h)
 OBJECTS  := $(SOURCES:%.c=%.o)
@@ -46,3 +48,9 @@ clean:
 distclean: clean
 	$(rm) listener sender
 	@echo "Executable removed!"
+
+install: all
+	$(INSTALL) listener /usr/local/bin
+	$(INSTALL) sender /usr/local/bin
+	$(INSTALL) etc.systemd.system.yarrp-server.service /etc/systemd/system/yarrp-server.service
+	$(MKDIR) -p -m777  /tmp/pinger/
