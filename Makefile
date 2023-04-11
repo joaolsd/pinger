@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS= -g
-LFLAGS=
+LFLAGS= -lpcap
 
 SOURCES  := $(wildcard *.c)
 INCLUDES := $(wildcard *.h)
@@ -38,6 +38,7 @@ sender: $(SENDER_OBJECTS) $(COMMON_OBJECTS)
 
 .PHONY: clean
 clean:
+	$(rm) sender listener
 	$(rm) $(OBJECTS)
 	@echo "Object file cleanup complete!"
 

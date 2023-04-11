@@ -105,14 +105,12 @@ void print_icmp6_header(const u_char *buffer) {
   icmp_code[TIME_EXCEEDED][1] = "Fragment Reass time exceeded";
 
   printf("ICMPv6 Header:\n");
-  printf(" Type:        (%u)\n",  (uint8_t)icmp6hdr->icmp6_type);
-
   printf(" Type:       %s (%u)\n", icmp_type[icmp6hdr->icmp6_type], (uint8_t)icmp6hdr->icmp6_type);
   printf(" Code:       %s (%u) \n", icmp_code[icmp6hdr->icmp6_type][icmp6hdr->icmp6_code], (unsigned int)icmp6hdr->icmp6_code);
+  printf(" Checksum:   %u \n",(unsigned int)icmp6hdr->icmp6_cksum);
   printf(" Id:         %u \n",(unsigned int)icmp6hdr->icmp6_id);
   printf(" Seq:        %u \n",(unsigned int)icmp6hdr->icmp6_seq);
-  printf(" Checksum:   %u \n",(unsigned int)icmp6hdr->icmp6_cksum);
-  printf(" Rest of header %08X: \n", (unsigned int)icmp6hdr->icmp6_dataun.icmp6_un_data32[0]);
+  printf(" Data %08X: \n", (unsigned int)icmp6hdr->icmp6_dataun.icmp6_un_data32[0]);
   Hexdump((const void*) buffer+sizeof(icmp6hdr), 8);
   
 }
@@ -202,7 +200,7 @@ void print_ipv4_header(const u_char *buffer)
     // printf(" More Fragment Field   : %d\n",(unsigned int)ip_hdr->ip_more_fragment);
     printf(" TTL      : %d\n",(unsigned int)ip_hdr->ttl);
     printf(" Protocol : %d\n",(unsigned int)ip_hdr->protocol);
-    printf(" Checksum : %1$d / %1$#04x\n",ntohs(ip_hdr->check), ntohs(ip_hdr->check));
+    printf(" Checksum : %1$d / %1$#04x\n",ntohs(ip_hdr->check));
     printf(" Source IP        : %s\n" , inet_ntoa(src.sin_addr) );
     printf(" Destination IP   : %s\n" , inet_ntoa(dst.sin_addr) );
 }

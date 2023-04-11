@@ -1,10 +1,11 @@
 #include <stdio.h>
+#include <stdint.h>
 #include <err.h>
 #include <errno.h>
-#include <sys/socket.h>
 #include <time.h>
 #include <sys/time.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <net/if.h>
 #include <linux/if_packet.h>
 #include <net/ethernet.h>
@@ -18,6 +19,7 @@
 #include <arpa/inet.h>
 
 #include "dbg-util.h"
+#include "sender.h"
 #include "util.h"
 
 #define ICMP_CODE 0;
@@ -237,10 +239,63 @@ void ether_header(int IP_v, uint8_t *outpacket) {
   }
   memcpy(outpacket + 12, &ether_type, 2);
 }
-
 /***************************************************/
+/* Taken from the Linux kernel */
+/** CRC table for the CRC-16. The poly is 0x8005 (x^16 + x^15 + x^2 + 1) */
+uint16_t const crc16_table[256] = {
+	0x0000, 0xC0C1, 0xC181, 0x0140, 0xC301, 0x03C0, 0x0280, 0xC241,
+	0xC601, 0x06C0, 0x0780, 0xC741, 0x0500, 0xC5C1, 0xC481, 0x0440,
+	0xCC01, 0x0CC0, 0x0D80, 0xCD41, 0x0F00, 0xCFC1, 0xCE81, 0x0E40,
+	0x0A00, 0xCAC1, 0xCB81, 0x0B40, 0xC901, 0x09C0, 0x0880, 0xC841,
+	0xD801, 0x18C0, 0x1980, 0xD941, 0x1B00, 0xDBC1, 0xDA81, 0x1A40,
+	0x1E00, 0xDEC1, 0xDF81, 0x1F40, 0xDD01, 0x1DC0, 0x1C80, 0xDC41,
+	0x1400, 0xD4C1, 0xD581, 0x1540, 0xD701, 0x17C0, 0x1680, 0xD641,
+	0xD201, 0x12C0, 0x1380, 0xD341, 0x1100, 0xD1C1, 0xD081, 0x1040,
+	0xF001, 0x30C0, 0x3180, 0xF141, 0x3300, 0xF3C1, 0xF281, 0x3240,
+	0x3600, 0xF6C1, 0xF781, 0x3740, 0xF501, 0x35C0, 0x3480, 0xF441,
+	0x3C00, 0xFCC1, 0xFD81, 0x3D40, 0xFF01, 0x3FC0, 0x3E80, 0xFE41,
+	0xFA01, 0x3AC0, 0x3B80, 0xFB41, 0x3900, 0xF9C1, 0xF881, 0x3840,
+	0x2800, 0xE8C1, 0xE981, 0x2940, 0xEB01, 0x2BC0, 0x2A80, 0xEA41,
+	0xEE01, 0x2EC0, 0x2F80, 0xEF41, 0x2D00, 0xEDC1, 0xEC81, 0x2C40,
+	0xE401, 0x24C0, 0x2580, 0xE541, 0x2700, 0xE7C1, 0xE681, 0x2640,
+	0x2200, 0xE2C1, 0xE381, 0x2340, 0xE101, 0x21C0, 0x2080, 0xE041,
+	0xA001, 0x60C0, 0x6180, 0xA141, 0x6300, 0xA3C1, 0xA281, 0x6240,
+	0x6600, 0xA6C1, 0xA781, 0x6740, 0xA501, 0x65C0, 0x6480, 0xA441,
+	0x6C00, 0xACC1, 0xAD81, 0x6D40, 0xAF01, 0x6FC0, 0x6E80, 0xAE41,
+	0xAA01, 0x6AC0, 0x6B80, 0xAB41, 0x6900, 0xA9C1, 0xA881, 0x6840,
+	0x7800, 0xB8C1, 0xB981, 0x7940, 0xBB01, 0x7BC0, 0x7A80, 0xBA41,
+	0xBE01, 0x7EC0, 0x7F80, 0xBF41, 0x7D00, 0xBDC1, 0xBC81, 0x7C40,
+	0xB401, 0x74C0, 0x7580, 0xB541, 0x7700, 0xB7C1, 0xB681, 0x7640,
+	0x7200, 0xB2C1, 0xB381, 0x7340, 0xB101, 0x71C0, 0x7080, 0xB041,
+	0x5000, 0x90C1, 0x9181, 0x5140, 0x9301, 0x53C0, 0x5280, 0x9241,
+	0x9601, 0x56C0, 0x5780, 0x9741, 0x5500, 0x95C1, 0x9481, 0x5440,
+	0x9C01, 0x5CC0, 0x5D80, 0x9D41, 0x5F00, 0x9FC1, 0x9E81, 0x5E40,
+	0x5A00, 0x9AC1, 0x9B81, 0x5B40, 0x9901, 0x59C0, 0x5880, 0x9841,
+	0x8801, 0x48C0, 0x4980, 0x8941, 0x4B00, 0x8BC1, 0x8A81, 0x4A40,
+	0x4E00, 0x8EC1, 0x8F81, 0x4F40, 0x8D01, 0x4DC0, 0x4C80, 0x8C41,
+	0x4400, 0x84C1, 0x8581, 0x4540, 0x8701, 0x47C0, 0x4680, 0x8641,
+	0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040
+};
 
-void build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket, struct sockaddr_in *to, struct sockaddr_in *from) {
+static uint16_t crc16_byte(uint16_t crc, const uint8_t data) {
+	return (crc >> 8) ^ crc16_table[(crc ^ data) & 0xff];
+}
+
+/**
+ * crc16 - compute the CRC-16 for the data buffer
+ * @crc:	previous CRC value
+ * @buffer:	data pointer
+ * @len:	number of bytes in the buffer
+ *
+ * Returns the updated CRC value.
+ */
+uint16_t crc16(uint16_t crc, uint8_t const *buffer, size_t len) {
+	while (len--)
+		crc = crc16_byte(crc, *buffer++);
+	return crc;
+}
+/***************************************************/
+int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket, struct probe *probe) {
   struct iphdr *ip = (struct iphdr *)(outpacket + ETH_HDRLEN); // offset by ethernet header length
   u_char *p = ((u_char *)ip) + IP_HDR_LEN;
   struct udphdr *udphdr = (struct udphdr *)(p);
@@ -253,7 +308,10 @@ void build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacke
 
   ether_header(4, outpacket);
 
-  switch (conf->proto) {
+// Set the IPv4 header ID field to be the value of the TTL (to detect in transit manipulation)
+  ip->id = ttl;
+
+  switch (probe->protocol) {
   case IPPROTO_ICMP:
     ip->protocol = IPPROTO_ICMP;
     frame_len = ETH_HDRLEN + IP_HDR_LEN + ICMP_HDRLEN + sizeof(struct packetdata);
@@ -276,9 +334,22 @@ void build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacke
   case IPPROTO_TCP:
     ip->protocol = IPPROTO_TCP;
     frame_len = ETH_HDRLEN + IP_HDR_LEN + TCP_HDR_LEN + sizeof(struct packetdata);
-    tcphdr->source = htons(conf->ident);
-    tcphdr->dest = htons(conf->port+seq); // Increment port with each step
-    tcphdr->seq = htonl(1234567);
+    tcphdr->source = crc16(0, (uint8_t const *)&(ip->daddr), 4); // Source port is a checksum of the destination IP
+    tcphdr->dest = htons(conf->port);
+    // Get seconds from top of the hour, including milliseconds
+    struct timespec tp;
+    int ret = clock_gettime(CLOCK_REALTIME, &tp);
+    long sec_from_hour;
+    uint32_t timestamp;
+    if (ret == 0) {
+      printf("seconds: %ld\n", tp.tv_sec);
+      printf("nanoseconds: %ld\n", tp.tv_nsec);
+      sec_from_hour = tp.tv_sec %3600;
+      // timestamp is an integer with the rightmost 3 digits being the milliseconds (*1000)
+      timestamp = sec_from_hour*1000 + tp.tv_nsec/1000000;
+      printf("timestamp: %d %d %d\n", sec_from_hour*1000, tp.tv_nsec/1000000, timestamp);
+    }
+    tcphdr->seq = htonl(timestamp);
     tcphdr->ack_seq = 0;
     tcphdr->doff=5;
     tcphdr->fin=0;
@@ -301,189 +372,236 @@ void build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacke
   ip->ihl = 5;
 	ip->tos = 0;
 	ip->tot_len = htons(frame_len - ETH_HDRLEN);
-  ip->id = htons(conf->ident+seq);
+  printf("IP total len: %d\n",ntohs(ip->tot_len));
+  ip->id = ttl; // store the original TTL here
 	ip->frag_off = 0;
   ip->ttl = ttl;
 	ip->check = 0;
-  ip->saddr = from->sin_addr.s_addr;
-  ip->daddr = to->sin_addr.s_addr;
-  
+  // struct sockaddr_in *intermediate;
+  // intermediate = (struct sockaddr_in *)(&(probe->src_addr));
+  // ip->saddr = ((struct sockaddr_in *)&(probe->src_addr))->sin_addr.s_addr;
+  // ip->daddr = ((struct sockaddr_in *)&(probe->dst_addr))->sin_addr.s_addr;
+
+  memcpy(&(ip->saddr), &(probe->src_addr), 4);
+  memcpy(&(ip->daddr), &(probe->dst_addr), 4);
+
 	ip->check = htons(checksum((uint16_t *)ip, sizeof(struct iphdr)));
 	
-  op->seq = seq;
-  op->ttl = ttl;
-	if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1)
-		err(1, "clock_gettime(CLOCK_MONOTONIC)");
+  // op->seq = seq;
+  // op->ttl = ttl;
+	// if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1) {
+	// 	err(1, "clock_gettime(CLOCK_MONOTONIC)");
+  // }
 
-  op->sec = htonl(ts.tv_sec);
-  op->usec = htonl((ts.tv_nsec) % 1000000000);
+  // op->sec = htonl(ts.tv_sec);
+  // op->usec = htonl((ts.tv_nsec) % 1000000000);
 
-  if (conf->proto == IPPROTO_ICMP && icmp_type == ICMP_ECHO) {
+  if (probe->protocol == IPPROTO_ICMP && icmp_type == ICMP_ECHO) {
     icmp_pkt->icmp_cksum = 0;
     icmp_pkt->icmp_cksum = checksum((u_short *)icmp_pkt, frame_len - sizeof(struct ip));
     if (icmp_pkt->icmp_cksum == 0) {
       icmp_pkt->icmp_cksum = 0xffff;
     }
   }
-	if (conf->proto == IPPROTO_UDP) {
+	if (probe->protocol == IPPROTO_UDP) {
 		udphdr->uh_sum = udp_checksum_ipv4((uint16_t *)udphdr, UDP_HDR_LEN + sizeof(struct packetdata), UDP_HDR_LEN + sizeof(struct packetdata), (uint32_t *)&ip->saddr, (uint32_t *)&ip->daddr);
 	}
-  if (conf->proto == IPPROTO_TCP) {
+  if (probe->protocol == IPPROTO_TCP) {
     tcphdr->check =  tcp_checksum_ipv4(tcphdr, TCP_HDR_LEN + sizeof(struct packetdata), TCP_HDR_LEN + sizeof(struct packetdata), &ip->saddr, &ip->daddr);
   }
+  return frame_len;
 }
 
 /***************************************************/
+int build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacket, struct probe *probe) {
 
-void build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacket, struct sockaddr_in6 *to, struct sockaddr_in6 *from, int sndsock) {
+//   struct timespec ts;
+//   struct packetdata *op;
+//   int i,status;
+//   int datalen = 0;
+//   uint16_t frame_len;
 
-  struct timespec ts;
-  struct packetdata *op;
-  int i,status;
-  int datalen = 0;
-  uint16_t frame_len;
-
-  ether_header(6, outpacket);
+//   ether_header(6, outpacket);
   
-  struct ip6_hdr *ip6 = (struct ip6_hdr *)(outpacket + ETH_HDRLEN);
-  // IPv6 version (4 bits), Traffic class (8 bits), Flow label (20 bits)
-  ip6->ip6_flow = htonl((6 << 28) | (0 << 20) | 0);
-  // Payload length (16 bits): ICMP header + ICMP data
-  ip6->ip6_plen = htons(ICMP6_HDRLEN + datalen);
-  // Hop limit (8 bits): default to maximum value
-  ip6->ip6_hops = hops;
+//   struct ip6_hdr *ip6 = (struct ip6_hdr *)(outpacket + ETH_HDRLEN);
+//   // IPv6 version (4 bits), Traffic class (8 bits), Flow label (20 bits)
+//   ip6->ip6_flow = htonl((6 << 28) | (0 << 20) | 0);
+//   // Payload length (16 bits): ICMP header + ICMP data
+//   ip6->ip6_plen = htons(ICMP6_HDRLEN + datalen);
+//   // Hop limit (8 bits): default to maximum value
+//   ip6->ip6_hops = hops;
 
- // // Source IPv6 address (128 bits)
- //  if ((status = inet_pton(AF_INET6, src_ip, &(ip6->ip6_src))) != 1) {
- //    fprintf (stderr, "inet_pton() failed for source address.\nError message: %s", strerror (status));
- //    exit (1);
- //  }
- //
- //  // Destination IPv6 address (128 bits)
- //  if ((status = inet_pton (AF_INET6, dst_ip, &(ip6->ip6_dst))) != 1) {
- //    fprintf (stderr, "inet_pton() failed for destination address.\nError message: %s", strerror (status));
- //    exit (1);
- //  }
+//  // // Source IPv6 address (128 bits)
+//  //  if ((status = inet_pton(AF_INET6, src_ip, &(ip6->ip6_src))) != 1) {
+//  //    fprintf (stderr, "inet_pton() failed for source address.\nError message: %s", strerror (status));
+//  //    exit (1);
+//  //  }
+//  //
+//  //  // Destination IPv6 address (128 bits)
+//  //  if ((status = inet_pton (AF_INET6, dst_ip, &(ip6->ip6_dst))) != 1) {
+//  //    fprintf (stderr, "inet_pton() failed for destination address.\nError message: %s", strerror (status));
+//  //    exit (1);
+//  //  }
 
-  ip6->ip6_src = from->sin6_addr;
-  ip6->ip6_dst = to->sin6_addr;
+//   ip6->ip6_src = from->sin6_addr;
+//   ip6->ip6_dst = to->sin6_addr;
 
-  // i = hops;
-  // if (setsockopt(sndsock, IPPROTO_IPV6, IPV6_UNICAST_HOPS, (char *)&i, sizeof(i)) == -1) {
-  //   warn("setsockopt IPV6_UNICAST_HOPS");
-  // }
+//   // i = hops;
+//   // if (setsockopt(sndsock, IPPROTO_IPV6, IPV6_UNICAST_HOPS, (char *)&i, sizeof(i)) == -1) {
+//   //   warn("setsockopt IPV6_UNICAST_HOPS");
+//   // }
 
-  u_char *p = ((u_char *)ip6) + IP6_HDR_LEN;
-  struct udphdr *udphdr = (struct udphdr *)(p);
-  struct icmp6_hdr *icp = (struct icmp6_hdr *)(p);
+//   u_char *p = ((u_char *)ip6) + IP6_HDR_LEN;
+//   int eh = 0;
+//   if (eh) { // Add extension header
+//     if (header_type == 1) {
+//       ip6->ip6_nxt = 0 ; // destination ext header
+//     }
+//     else if (header_type == 2) {
+//       ip6->ip6_nxt = 60 ; // hop by hop ext header
+//     }
+//     // now set up the HBH or dest header
+//     hbh_hdr = (struct ip6_dest *) p;
+//     // select padding size
+//     hbh_hdr->ip6d_len = (padding / 8) - 1;  // Set option header length (does not include the first 8 bytes), in 8-byte units
+//     if (debug) printf("selected %d bytes of padding\n", pad_sizes[pad_rand]);
+//     hbh_opt = (uint8_t *)hbh_hdr + 2;
+//     *hbh_opt = 0x1E; // Option is one of the ones reserved for experiments
+//     padding = ext_header_size - 4;  // PADN data option length, in bytes
+//     *(hbh_opt + 1) = padding; 
 
-  switch (conf->proto) {
-    case IPPROTO_ICMP:
-      // Next header (8 bits): 58 for ICMP
-      ip6->ip6_nxt = IPPROTO_ICMPV6;
-      frame_len = ETH_HDRLEN + IP6_HDR_LEN + ICMP6_HDRLEN + sizeof(struct packetdata);
-      // struct icmp6_hdr *icp = (struct icmp6_hdr *)(outpacket+ETH_HDRLEN+IP6_HDR_LEN);
-      icp->icmp6_type = htons(ICMP6_ECHO_REQUEST);
-      icp->icmp6_code = 0;
-      icp->icmp6_id = htons(conf->ident);
-      icp->icmp6_seq = htons(seq);
-      icp->icmp6_cksum = 0;
-      icp->icmp6_cksum = icmp6_checksum(ip6, icp, NULL, datalen);
-      op = (struct packetdata *)(outpacket + ETH_HDRLEN + IP6_HDR_LEN + ICMP6_HDRLEN);
-      break;
-    case IPPROTO_UDP:
-      // Next header (8 bits)
-      ip6->ip6_nxt = IPPROTO_UDP;
-      frame_len = ETH_HDRLEN + IP6_HDR_LEN + UDP_HDR_LEN + sizeof(struct packetdata);
-      udphdr->uh_sport = htons(conf->ident);
-      udphdr->uh_dport = htons(conf->port+seq);
-      udphdr->uh_ulen = htons(frame_len - ETH_HDRLEN - sizeof(struct ip6_hdr));
-      udphdr->uh_sum = 0;
-      op = (struct packetdata *)(udphdr + 1);
-      break;
-    default:
-    op = (struct packetdata *)(ip6 + 1);
-  }
-  op->sec = htonl(ts.tv_sec);
-  op->usec = htonl((ts.tv_nsec) % 1000000000);
-  op->seq = seq;
-  op->ttl = hops;
-  ((struct sockaddr_in6 *)to)->sin6_port = htons(conf->port + seq);
-	if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1) {
-    err(1, "clock_gettime(CLOCK_MONOTONIC)");
-	}
+//     // write 0 into padding payload
+//     for (pad_count = 0; pad_count < padding; pad_count++) {
+//       * (hbh_opt + 2 + pad_count) = 0;
+//       }
+//     }
+//   else {
+//     e_iphdr->ip6_nxt = IPPROTO_TCP ; // TCP header
+//     }
+
+//   struct udphdr *udphdr = (struct udphdr *) p;
+//   struct tcphdr *udphdr = (struct tcphdr *) p;
+//   struct icmp6_hdr *icp = (struct icmp6_hdr *) p;
+
+//   uint8_t *nxt_hdr;
+//   if (eh) {
+//     nxt_hdr = (uint8_t *)hbh_hdr.ip6d_nxt;
+//   } else {
+//     nxt_hdr = (uint8_t *)ip6.ip6_nxt;
+//   }
+//   switch (conf->proto) {
+//     case IPPROTO_ICMP:
+//       break;
+//     case IPPROTO_UDP:
+//       break;
+//     case IPPROTO_TCP:
+//       ip6->ip6_nxt = IPPROTO_TCP;
+
+  
+//   hbh_hdr->ip6d_nxt = IPPROTO_TCP ;
+  
+
+//   switch (conf->proto) {
+//     case IPPROTO_ICMP:
+//       // Next header (8 bits): 58 for ICMP
+//       *nxt_hdr = IPPROTO_ICMPV6;
+//       frame_len = ETH_HDRLEN + IP6_HDR_LEN + ICMP6_HDRLEN + sizeof(struct packetdata);
+//       // struct icmp6_hdr *icp = (struct icmp6_hdr *)(outpacket+ETH_HDRLEN+IP6_HDR_LEN);
+//       icp->icmp6_type = htons(ICMP6_ECHO_REQUEST);
+//       icp->icmp6_code = 0;
+//       icp->icmp6_id = htons(conf->ident);
+//       icp->icmp6_seq = htons(seq);
+//       icp->icmp6_cksum = 0;
+//       icp->icmp6_cksum = icmp6_checksum(ip6, icp, NULL, datalen);
+//       op = (struct packetdata *)(outpacket + ETH_HDRLEN + IP6_HDR_LEN + ICMP6_HDRLEN);
+//       break;
+//     case IPPROTO_UDP:
+//       // Next header (8 bits)
+//       *nxt_hdr = IPPROTO_UDP;
+//       frame_len = ETH_HDRLEN + IP6_HDR_LEN + UDP_HDR_LEN + sizeof(struct packetdata);
+//       udphdr->uh_sport = htons(conf->ident);
+//       udphdr->uh_dport = htons(conf->port+seq);
+//       udphdr->uh_ulen = htons(frame_len - ETH_HDRLEN - sizeof(struct ip6_hdr));
+//       udphdr->uh_sum = 0;
+//       op = (struct packetdata *)(udphdr + 1);
+//       break;
+//     case IPPROTO_TCP:
+//       // Next header (8 bits)
+//       *nxt_hdr = IPPROTO_TCP;
+//       frame_len = ETH_HDRLEN + IP6_HDR_LEN + UDP_HDR_LEN + sizeof(struct packetdata);
+//       udphdr->uh_sport = htons(conf->ident);
+//       udphdr->uh_dport = htons(conf->port+seq);
+//       udphdr->uh_ulen = htons(frame_len - ETH_HDRLEN - sizeof(struct ip6_hdr));
+//       udphdr->uh_sum = 0;
+//       op = (struct packetdata *)(udphdr + 1);
+//     default:
+//     op = (struct packetdata *)(ip6 + 1);
+//   }
+//   op->sec = htonl(ts.tv_sec);
+//   op->usec = htonl((ts.tv_nsec) % 1000000000);
+//   op->seq = seq;
+//   op->ttl = hops;
+//   ((struct sockaddr_in6 *)to)->sin6_port = htons(conf->port + seq);
+// 	if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1) {
+//     err(1, "clock_gettime(CLOCK_MONOTONIC)");
+// 	}
+// return frame_len;
 }
 
 /***************************************************/
-
-void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct sockaddr *to, struct sockaddr *from) {
+void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct probe *probe) {
   int len, addr_len;
-  int v6flag;
   uint8_t outpacket[1514];
   icmp_type = ICMP_ECHO; /* default ICMP code/type */
-  
-  // int x;
-  // struct ifreq ifreq;
-  // memset(&ifreq,0,sizeof(ifreq));
-  // strncpy(ifreq.ifr_name, "eth0", IFNAMSIZ-1); //giving name of Interface
+  uint16_t frame_len;
 
-  // printf("######PRE:\n");
-  // for(x = 1; x < 3; x++){
-  //         ifreq.ifr_ifindex = x;
-  //         if(ioctl(sndsock, SIOCGIFNAME, &ifreq) < 0 )
-  //                 perror("ioctl SIOCGIFNAME error");
-  //         printf("index %d is %s\n", x, ifreq.ifr_name);
-  // }
-
-
-  switch (to->sa_family) {
-  case AF_INET:
-    printf("IPv4\n");
-    v6flag = 0;
-    build_probe4(conf, seq, ttl, outpacket, (struct sockaddr_in *)to, (struct sockaddr_in *)from);
+  switch (probe->addr_family) {
+  case 4:
+    if (debug) printf("IPv4\n");
+    frame_len = build_probe4(conf, seq, ttl, outpacket, probe);
     addr_len = sizeof(struct sockaddr_in);
     break;
-  case AF_INET6:
-    printf("IPv6\n");
-    v6flag = 1;
-    build_probe6(conf, seq, ttl, outpacket, (struct sockaddr_in6 *)to, (struct sockaddr_in6 *)from, sndsock);
+  case 6:
+    if (debug) printf("IPv6\n");
+    frame_len = build_probe6(conf, seq, ttl, outpacket, probe);
     addr_len = sizeof(struct sockaddr_in6);
     break;
   default:
-    errx(1, "unsupported AF: %d", to->sa_family);
+    errx(1, "unsupported AF: %d", (probe->addr_family));
     break;
   }
 
-  printf("Packet dump:\n");
-  print_ethernet_header((const u_char *)outpacket);
-  if (v6flag) {
-    print_ipv6_header((const u_char *)outpacket+ETH_HDRLEN);
-    if (conf->proto == IPPROTO_ICMP) {
-      print_icmp6_header((const u_char *)outpacket+ETH_HDRLEN+IP6_HDR_LEN);
-    } else if (conf->proto == IPPROTO_UDP) {
-      print_udp_header((const u_char *)outpacket+ETH_HDRLEN+IP6_HDR_LEN);
-    } else if (conf->proto == IPPROTO_TCP) {
-      print_tcp_header((const u_char *)outpacket+ETH_HDRLEN+IP6_HDR_LEN);
+  if (debug) {
+    printf("Packet dump:\n");
+    print_ethernet_header((const u_char *)outpacket);
+    if (probe->addr_family == 6) {
+      print_ipv6_header((const u_char *)outpacket+ETH_HDRLEN);
+      if (probe->protocol == IPPROTO_ICMP) {
+        print_icmp6_header((const u_char *)outpacket+ETH_HDRLEN+IP6_HDR_LEN);
+      } else if (probe->protocol == IPPROTO_UDP) {
+        print_udp_header((const u_char *)outpacket+ETH_HDRLEN+IP6_HDR_LEN);
+      } else if (probe->protocol == IPPROTO_TCP) {
+        print_tcp_header((const u_char *)outpacket+ETH_HDRLEN+IP6_HDR_LEN);
+      }
+    } else {
+      print_ipv4_header((const u_char *)outpacket+ETH_HDRLEN);
+      if (probe->protocol == IPPROTO_ICMP) {
+        print_icmp_header((const u_char *)outpacket+ETH_HDRLEN+IP_HDR_LEN);
+      } else if (probe->protocol == IPPROTO_UDP) {
+        print_udp_header((const u_char *)outpacket+ETH_HDRLEN+IP_HDR_LEN);
+      } else if (probe->protocol == IPPROTO_TCP) {
+        print_tcp_header((const u_char *)outpacket+ETH_HDRLEN+IP_HDR_LEN);
+      }
     }
-  } else {
-    print_ipv4_header((const u_char *)outpacket+ETH_HDRLEN);
-    if (conf->proto == IPPROTO_ICMP) {
-      print_icmp_header((const u_char *)outpacket+ETH_HDRLEN+IP_HDR_LEN);
-    } else if (conf->proto == IPPROTO_UDP) {
-      print_udp_header((const u_char *)outpacket+ETH_HDRLEN+IP_HDR_LEN);
-    } else if (conf->proto == IPPROTO_TCP) {
-      print_tcp_header((const u_char *)outpacket+ETH_HDRLEN+IP_HDR_LEN);
-    }
-
   }
 	
   struct ifreq ifreq_i;
-  char *if_name = "eth0";
-  int if_name_len = strlen(if_name);
+  int if_name_len;
+  if_name_len = strlen(conf->if_name);
 
   memset(&ifreq_i,0,sizeof(ifreq_i));
   if (if_name_len<sizeof(ifreq_i.ifr_name)) {
-    strncpy(ifreq_i.ifr_name, if_name, if_name_len); //giving name of Interface
+    strncpy(ifreq_i.ifr_name, conf->if_name, if_name_len); //giving name of Interface
   } else {
       perror("interface name is too long");
   }
@@ -493,7 +611,7 @@ void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct
 	}
  
   char ifname[256];
-	printf("interface index=%d, interface: %s\n",ifreq_i.ifr_ifindex, if_indextoname(ifreq_i.ifr_ifindex, ifname));
+	if (debug) printf("interface index=%d, interface: %s\n",ifreq_i.ifr_ifindex, if_indextoname(ifreq_i.ifr_ifindex, ifname));
   
 	struct sockaddr_ll sadr_ll;
 	memset(&sadr_ll, 0, sizeof(sadr_ll));
@@ -503,20 +621,15 @@ void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct
   uint8_t dst_mac[] = {0x00, 0x00, 0x0c, 0x9f, 0xf0, 0x04}; // for testbed-de's gateway
   // uint8_t dst_mac[] = {0x16, 0x98, 0x77, 0x25, 0xf5, 0x64}; // mac mini @home
 	memcpy(sadr_ll.sll_addr, dst_mac, ETH_ALEN);
-
-  uint16_t frame_len;
-  if (v6flag) {
-  	frame_len = ETH_HDRLEN + IP6_HDR_LEN + ICMP6_HDRLEN + sizeof(struct packetdata);
-  } else {
-  	frame_len = ETH_HDRLEN + IP_HDR_LEN + UDP_HDR_LEN + sizeof(struct packetdata);
-  }
+  
+  printf("frame_len = %d\n",frame_len);
   len = sendto(sndsock, outpacket, frame_len, 0, (const struct sockaddr*)&sadr_ll, sizeof(struct sockaddr_ll));
-	printf("sent %d bytes on socket %d\n", len, sndsock);
+	if (debug) printf("sent %d bytes on socket %d\n", len, sndsock);
   if (len == -1 || len != frame_len)  {
     if (len == -1) {
 	    warn("sendto");    	
     }
-    printf("sendto wrote %d chars, ret=%d\n", len, len);
+    if (debug) printf("sendto wrote %d chars, ret=%d\n", len, len);
     (void) fflush(stdout);
   }
 }

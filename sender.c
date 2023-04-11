@@ -1,4 +1,3 @@
-#include <sys/types.h>
 #include <sys/stat.h>
 #include <libgen.h>
 #include <arpa/inet.h>
@@ -24,9 +23,8 @@
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <unistd.h>
-#include "util.h"
 #include "sender.h"
-
+#include "util.h"
 
 #include <net/if.h>
 #include <sys/ioctl.h>
@@ -69,17 +67,153 @@
 #endif
 
 int is_daemon = 0;
+int debug = 0;
 int ret = 0;
 
 /*****************************************/
 void usage(char *progname) {
-  printf("pinger [-f <filename>] [-d] [-h] [-6] [-t] [-i] [\"IPv4/v6 Address literal]\"");
+  printf("pinger [-f <filename>] [-d] [-h] [-6] [-t] [-i] [\"probe data\"]");
   printf("-f: path to an input file or unix socket\n");
   printf("-d: daemonise (must use a socket to send input)\n");
   printf("-i: use ICMP\n");
   printf("-t: use TCP\n");
-  printf("-h: this help");
+  printf("-h: this help\n");
+  printf("-x: Turn on debugging\n");
+  printf("data:\n");
+  printf("  addr_family,target addr,protocol,options\n");
 	exit(0);
+}
+/*****************************************/
+void parse_input_line(char *str, struct probe* probe)
+{
+  char *dst_addr, *options;
+  struct addrinfo hints, *res, *src_ip;
+  int error;
+  // 4,192.168.1.1,u,options
+  // 1st field: 4 or 6, for IPv4/IPv6
+  // 2nd field: IPv(4|6) address
+  // 3rd field: protocol (u:udp, t:tcp, i:icmp)
+  // 4th field: initial TTL/hop count
+  // 5th field: final TTL/hop count
+  // 6th field: options (e.g. extension header for IPv6)
+  probe->addr_family = str[0]-'0'; // first field, single char is a 4 or 6
+  dst_addr = strtok(str+2, ","); // 2nd field is the IP address
+  probe->protocol = *(strtok(NULL,",")); // transport protocol
+  probe->initial_ttl = atoi(strtok(NULL,","));
+  probe->final_ttl = atoi(strtok(NULL,","));
+  options = strtok(NULL,","); // extension header, if any
+
+  switch (probe->protocol) {
+    case 'u':
+    case 'U':
+      probe->protocol = IPPROTO_UDP;
+      break;
+    case 't':
+    case 'T':
+      probe->protocol = IPPROTO_TCP;
+      break;
+    case 'i':
+    case 'I':
+      if (probe->addr_family == 4) {
+      probe->protocol = IPPROTO_ICMP;
+      }  
+      if (probe->addr_family == 6) {
+      probe->protocol = IPPROTO_ICMPV6;
+      }
+      break;
+    default:
+      errx(1, "Unknown protocol in input line: %d\n", probe->protocol);
+  }
+
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_RAW;
+  hints.ai_protocol = IPPROTO_RAW;
+  hints.ai_flags = AI_CANONNAME;
+  if ((error = getaddrinfo(dst_addr, NULL, &hints, &res))) {
+    errx(1, "%s", gai_strerror(error));
+  }
+  if ((res->ai_family == AF_INET && probe->addr_family != 4) || \
+      (res->ai_family == AF_INET6 && probe->addr_family != 6)) {
+        errx(1, "Mismatch between address family and address\n");
+  }
+  if (probe->addr_family == 4) {
+  memcpy(&(probe->dst_addr), &(((struct sockaddr_in *)(res->ai_addr))->sin_addr), sizeof(struct in_addr));
+  } else {
+    memcpy(&(probe->dst_addr), &(((struct sockaddr_in6 *)(res->ai_addr))->sin6_addr), sizeof(struct in6_addr));
+  }
+
+  if (debug) {
+    char * hostname;
+    char * hbuf;
+      hostname = res->ai_canonname ? strdup(res->ai_canonname) : dst_addr;
+      if (!hostname) {
+        printf("malloc error for hostname");
+        freeaddrinfo(res);
+        return;
+      }
+      printf("Hostname: %s\n", hostname);
+    if (res->ai_next) {
+      if (getnameinfo(res->ai_addr, res->ai_addrlen, hbuf,
+          sizeof(hbuf), NULL, 0, NI_NUMERICHOST) != 0) {
+        strncpy(hbuf, "?", sizeof(hbuf));
+        warnx("Warning: %s has multiple "
+          "addresses; using %s", hostname, hbuf);
+      }
+    }
+  }
+
+  // Process options
+  strncpy((char *)&(probe->options), options, sizeof(probe->options));
+  freeaddrinfo(res);
+}
+/*****************************************/
+int open_v6_socket() {
+  int send_socket;
+  int proto, flag;
+  int sock_errno = 0;
+
+#ifdef IPV6_PKTINFO
+  proto = IPPROTO_IPV6;
+  flag = SSO_IPV6_RECVPKTINFO;
+#endif
+  if ((send_socket = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
+    sock_errno = errno;
+  }
+
+  if (sock_errno != 0) {
+    perror("");
+    errx(5, "socket(SOCK_DGRAM)");
+  }
+
+  return send_socket;
+}
+/*****************************************/
+int open_v4_socket() {
+  int send_socket;
+  int proto, flag;
+  int sock_errno = 0;
+#ifdef HAVE_IP_PKTINFO
+  // If on Linux
+  proto = SOL_IP;
+  flag = IP_PKTINFO;
+#endif
+#ifdef IP_RECVDSTADDR
+  proto = IPPROTO_IP;
+  // Set IP_RECVDSTADDR option (*BSD)
+  flag = IP_RECVDSTADDR;
+#endif
+
+  if ((send_socket = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
+    sock_errno = errno;
+    perror("Can't open send socket");
+  }
+
+  if (sock_errno != 0) {
+    errx(5, "raw socket");
+  }
+
+  return send_socket;
 }
 /*****************************************/
 void socket_non_block (int socket) {
@@ -98,9 +232,8 @@ void socket_non_block (int socket) {
   }
 }
 /*****************************************/
-
 // Setup a Unix domain socket to listen on
-int setup() {
+int setup_unix_socket() {
   int socket_fd;
   int result;
   struct sockaddr_un addr;
@@ -146,58 +279,53 @@ int setup() {
   return socket_fd;
 }
 /*****************************************/
-
 int main (int argc, char const *argv[])
 {
-  char          *dest;
-  const char    *source, *source_v4, *source_v6;
-  struct tr_conf    *conf;  /* configuration defaults */
+  const char      *source_v4_str, *source_v6_str;
+  struct tr_conf  *conf;  /* configuration defaults */
 
-  struct sockaddr   *from, *to;
-  struct addrinfo    hints, *res, *src_ip;
-  const char  *hostname = NULL;
+  struct addrinfo hints, *src_ip;
+  const char     *hostname = NULL;
   char ch;
   int error;
   char  hbuf[NI_MAXHOST];
 
+  int send_socket_v4, send_socket_v6;
   int socket_fd, fd;
   int new_fd = 0;
   FILE *file;
   
-  struct sockaddr_in   from4, to4;
-  struct sockaddr_in6  from6, to6;
+  struct probe probe;
 
+  struct in_addr  *source_v4;
+  struct in6_addr *source_v6;
+
+  source_v4 = malloc(sizeof(struct in_addr));
+  source_v6 = malloc(sizeof(struct in6_addr));
   
   int sndsock;  /* send socket file descriptor */
-  
-  int sndsock4, sndsock6;
-  int v4sock_errno = 0;
-  int v6sock_errno = 0;
-  
-  int v6flag = 0;
   int proto, flag;
-
   int file_input = 0;
   
+  // default values
   conf = calloc(1, sizeof(struct tr_conf));
-  conf->incflag = 1;
   conf->first_ttl = 1;
   conf->proto = IPPROTO_UDP;
   conf->max_ttl = 32;
   // conf->max_ttl = IPDEFTTL;
   conf->nprobes = 3;
-  
-	conf->port = 33434;
+  conf->if_name =  "eth0";
+  // conf->if_name =  "enp0s2";
+	conf->port = 443;
 	conf->ident = 666;
 	
-  char buffer[128];
   char *progname = basename((char *)argv[0]);
   
   char *input_f;
   char *lineptr;
-  lineptr = calloc(256, 1);
+  lineptr = calloc(128, 1);
   
-  while ((ch = getopt(argc, (char * const *)argv, "df:h6ti")) != (char)-1) {
+  while ((ch = getopt(argc, (char * const *)argv, "df:hitx")) != (char)-1) {
     // char *optarg;
     switch (ch) {
       case 'h':
@@ -206,40 +334,52 @@ int main (int argc, char const *argv[])
       case 'd':
         is_daemon = 1;
         break;
-      case 'f': // name of input file or socket (if in is_daemon mode)
+      case 'f': // name of input file or socket (if in daemon mode)
         input_f = optarg;
         file_input = 1;
         break;
-      case '6':
-        v6flag = 1;
-        break;
+      // case '6':
+      //   v6flag = 1;
+      //   break;
       case 'i':
         conf->proto = IPPROTO_ICMP;
         break;
       case 't':
-          conf->proto = IPPROTO_TCP;
-          break;
+        conf->proto = IPPROTO_TCP;
+        break;
+      case 'x': // Debug flag
+        debug = 1;
+        break;
       default:
-        ;
+        usage(progname);
     }
   }
 
-  argc -= optind;
-  argv += optind;
+  // Non option argument
+  lineptr = (char *)argv[optind];
 
-  if (is_daemon == 0 && file_input == 0) {
-    if (argc < 1 || argc > 3)
-      usage(progname);
-    dest = (char *)*argv;    
-  }
+  // Initialise source addresses
+  source_v4_str = "172.104.147.241"; // testbed-de
+  source_v6_str = "2a01:7e01::f03c:91ff:fed5:395"; // testbed-de
 
-  source_v4 = "172.104.147.241"; // testbed-de
-  source_v6 = "2a01:7e01::f03c:91ff:fed5:395"; // testbed-de
+  inet_pton(AF_INET, (char *)source_v4_str, source_v4);
+  inet_pton(AF_INET6, (char *)source_v6_str, source_v6);
+  // memset(&hints, 0, sizeof(hints));
+  // hints.ai_socktype = SOCK_RAW;
+  // hints.ai_protocol = IPPROTO_RAW;
+  // // hints.ai_flags = AI_CANONNAME;
+  // hints.ai_flags = AI_NUMERICHOST;
+  // hints.ai_family = AF_INET;
+  // if ((error = getaddrinfo(source_v4_str , NULL, &hints, &source_v4)))
+  //   errx(1, "%s", gai_strerror(error));
+  // hints.ai_family = AF_INET6;
+  // if ((error = getaddrinfo(source_v6_str , NULL, &hints, &source_v6)))
+  //   errx(1, "%s", gai_strerror(error));
   
   // Open file or socket
   if (file_input) {
     if (is_daemon) {
-      socket_fd = setup();
+      socket_fd = setup_unix_socket();
       // Start listening on socket
       if (listen(socket_fd, SOMAXCONN) == -1) {
         perror("Socket listen error");
@@ -254,8 +394,6 @@ int main (int argc, char const *argv[])
             perror("Error accepting socket");
             exit(-2);
           }
-        } else {
-          printf("Accepted new connection\n");
         }
       }
     } else {
@@ -266,143 +404,63 @@ int main (int argc, char const *argv[])
         exit(-1);
       }
     }
+  } else {
+   file = stdin;
   }
-  
+
+  send_socket_v4 = open_v4_socket();
+  send_socket_v6 = open_v6_socket();
+
   do {
     if (file_input) {
       if (is_daemon) {
-        if (read(new_fd, buffer, sizeof(buffer)) == -1) {
+        if (read(new_fd, lineptr, sizeof(lineptr)) == -1) {
           if (errno == EAGAIN) {
             continue;
           }
           perror("Error reading from socket");
         }
-        printf("read new data: %s\n", buffer);
-        dest = buffer+6; // address starts at string position 6
-        *(buffer+5) = 0; // Null terminate at position 6 for atoi below
-        conf->port = atoi(buffer);
-        fprintf(stderr, "Address: %s, Port: %d\n", dest, conf->port);
+        if (debug) printf("read new data: %s\n", lineptr);
       } else {
-        size_t n = 256;
+        size_t n = 128;
         ret = getline(&lineptr, &n, file);
-        if (ret == -1) {
-          exit(0);
-        }
-        dest = strtok(lineptr, ","); // first item in the line is the IP address
-        conf->port = atoi(strtok(NULL,",")); // and the port comes after the comma
-        if (ret != 2) {
-          printf("dest: %s, port: %d\n", dest, conf->port);
-        }
+        if (ret == -1) exit(0);
       }
-    }
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_RAW;
-    hints.ai_protocol = IPPROTO_RAW;
-    hints.ai_flags = AI_CANONNAME;
-    if ((error = getaddrinfo(dest, NULL, &hints, &res)))
-      errx(1, "%s", gai_strerror(error));
-    if (res->ai_family == AF_INET) {
-      source = source_v4;
-      hints.ai_family = AF_INET;
-      v6flag = 0;
-    } else if (res->ai_family == AF_INET6) {
-      source = source_v6;
-      hints.ai_family = AF_INET6;
-      v6flag = 1;
     } else {
-      errx(1, "Unknown address family\n");
+        size_t n = 128;
+        ret = getline(&lineptr, &n, file);
+        if (ret == -1) exit(0);
     }
-    if ((error = getaddrinfo(source , NULL, &hints, &src_ip)))
-      errx(1, "%s", gai_strerror(error));
+    parse_input_line(lineptr,&probe);
 
-    switch (res->ai_family) {
-    case AF_INET:
-      to = (struct sockaddr *)&to4;
-      from = (struct sockaddr *)&from4;
-      break;
-    case AF_INET6:
-      to = (struct sockaddr *)&to6;
-      from = (struct sockaddr *)&from6;
-      break;
-    default:
-      errx(1, "Unsupported AF: %d", res->ai_family);
-      break;
-    }
-
-    memcpy(to, res->ai_addr, res->ai_addrlen);
-    memcpy(from, src_ip->ai_addr, src_ip->ai_addrlen);
-  
-    if (!hostname) {
-      hostname = res->ai_canonname ? strdup(res->ai_canonname) : dest;
-      printf("Hostname: %s\n", hostname);
-      if (!hostname)
-        errx(1, "malloc");
-    }
-
-    if (res->ai_next) {
-      if (getnameinfo(res->ai_addr, res->ai_addrlen, hbuf,
-          sizeof(hbuf), NULL, 0, NI_NUMERICHOST) != 0)
-        strncpy(hbuf, "?", sizeof(hbuf));
-      warnx("Warning: %s has multiple "
-          "addresses; using %s", hostname, hbuf);
-    }
-
-    if (v6flag) {
-      #ifdef IPV6_PKTINFO
-          proto = IPPROTO_IPV6;
-          flag = SSO_IPV6_RECVPKTINFO;
-      #endif
-          if ((sndsock6 = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
-        v6sock_errno = errno;
-      }
-
-      if (v6sock_errno != 0) {
-        perror("");
-        errx(5, "socket(SOCK_DGRAM)");
-      }
-
-      sndsock = sndsock6;
-    } else {
-      #ifdef HAVE_IP_PKTINFO
-          // If on Linux
-          proto = SOL_IP;
-          flag = IP_PKTINFO;
-      #endif
-      #ifdef IP_RECVDSTADDR
-          proto = IPPROTO_IP;
-          // Set IP_RECVDSTADDR option (*BSD)
-          flag = IP_RECVDSTADDR;
-      #endif
-    
-      if ((sndsock4 = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) == -1) {
-        v4sock_errno = errno;
-        perror("Can't open send socket");
-      }
-
-      if (v4sock_errno != 0) {
-        errx(5, "raw socket");
-        }
-      
-        sndsock = sndsock4;
-    }
-
-    printf("Send socket: %d\n", sndsock);
     int seq = 0;
-    int ttl = 1;
-    char addr_str[256];
-    if (v6flag) {
-      printf("Sending probe to %s, %s\n", hostname, inet_ntop(AF_INET6, &(((struct sockaddr_in6 *)to)->sin6_addr), addr_str, 256));
+    int i_ttl, f_ttl, ttl;
+    if (probe.initial_ttl != 0) {
+      i_ttl = probe.initial_ttl;
     } else {
-      printf("Sending probe to %s, %s\n", hostname, inet_ntop(AF_INET, &(((struct sockaddr_in *)to)->sin_addr), addr_str, 256));    
+      i_ttl = conf->first_ttl;
+    }
+    if (probe.final_ttl != 0) {
+      f_ttl = probe.final_ttl;
+    } else {
+      f_ttl = conf->max_ttl;
     }
 
-    for (ttl = conf->first_ttl; ttl < conf->max_ttl; ttl++) {
-      send_probe(conf, sndsock, seq, ttl, to, from);
-      // send_probe(conf, sndsock, seq, 64, to, from);
+    char addr_str[256];
+    if (probe.addr_family == 6) {
+      memcpy((void *)&(probe.src_addr), (void *)source_v6, sizeof(struct in6_addr));
+      printf("Sending probe to %s\n", inet_ntop(AF_INET6, &(probe.dst_addr), addr_str, 256));
+      sndsock = send_socket_v6;
+    } else {
+      memcpy((void *)&(probe.src_addr), (void *)source_v4, sizeof(struct in_addr));
+      printf("Sending probe to %s\n", inet_ntop(AF_INET, &(probe.dst_addr), addr_str, 256));
+      sndsock = send_socket_v4;
     }
 
-    freeaddrinfo(res);
+    for (ttl = i_ttl; ttl <= f_ttl; ttl++) {
+      send_probe(conf, sndsock, seq, ttl, &probe);
+    }
+
   } while(file_input);
   
   return 0;

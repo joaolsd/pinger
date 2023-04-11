@@ -1,20 +1,29 @@
-#include <libgen.h>
-#include <arpa/inet.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 #include <err.h>
 #include <errno.h>
+
+#include <libgen.h>
+#include <arpa/inet.h>
 #include <limits.h>
 #include <netdb.h>
+#if __APPLE__
+#include <netinet/if_ether.h>
+#elif __linux__
 #include <linux/if_ether.h>
+#endif
+#include <pcap.h>
+
 #include <netinet/icmp6.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
 #include <netinet/ip_icmp.h>
 #include <netinet/udp.h>
+#include <netinet/tcp.h>
 #include <pwd.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/socket.h>
 // #include <sys/sysctl.h>
 #include <sys/time.h>
@@ -26,207 +35,240 @@
 #include "util.h"
 #include "listener.h"
 
-#ifdef __linux__
-#  if defined IPV6_RECVPKTINFO
-#    include <linux/version.h>
-#    if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,14)
-#      if defined IPV6_2292PKTINFO
-#        undef IPV6_RECVPKTINFO
-#        undef IPV6_PKTINFO
-#        define IPV6_RECVPKTINFO IPV6_2292PKTINFO
-#        define IPV6_PKTINFO IPV6_2292PKTINFO
-#      endif
-#    endif
-#  endif
-#endif
-
-#ifdef __linux__
-#  if defined IP_PKTINFO
-#    define HAVE_IP_PKTINFO
-#  endif
-#endif
-
-/*
- *      Linux uses IPV6_RECVPKTINFO for the setsockopt() call,
- *      and IPV6_PKTINFO for sendmsg() and recvmsg()
- *      Others use IPV6_PKTINFO for all calls.
- */
-#ifdef IPV6_PKTINFO
-#ifdef __linux__
-#define SSO_IPV6_RECVPKTINFO IPV6_RECVPKTINFO
-#else
-#define SSO_IPV6_RECVPKTINFO IPV6_PKTINFO
-#endif
-#endif
-
-#ifdef __APPLE__
-#define SOL_IP IP_PKTINFO
-#endif
+#define SNAP_LEN 8192
 
 #define ETH_HDRLEN 14
-
 #define IP_HDR_LEN 20
 #define IP6_HDR_LEN 40
+#define ICMP_HDR_LEN 8
+
+#define NEXTHDR_HOP 0
+#define NEXTHDR_DEST 60
+
+int debug = 0;
+static char *interface = "eth0";
+static char *host_v6 = "2a01:7e01::f03c:91ff:fed5:395";
+static char *host_v4 = "172.104.147.241";
+static int version = 0 ;
 
 /*****************************************/
-void listen_for_icmp(int rcvsock4, int rcvsock6) {
-  int i;
-  #define MAX_PKT_SIZE 1514
-  uint8_t inpacket[MAX_PKT_SIZE];
-  struct sockaddr_in responder;
-     
-  static struct epoll_event ev4;
-  static struct epoll_event ev6;
-  struct epoll_event events[2];
-  int nfds;
-  
-  ssize_t rd_len;
-  
-  int epfd = epoll_create(2);
+void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
+  struct ip6_hdr *ipv6_hdr;
+  struct ip6_hdr *o_ipv6_hdr;
+  struct iphdr *ipv4_hdr;
+  struct icmphdr *icmp_hdr;
+  struct iphdr *emb_ipv4_hdr;
+  struct icmp6_hdr *icmp6_hdr;
+  struct tcphdr *tcp_hdr;
+  struct tcphdr *emb_tcp_hdr;
+  int ipv4 = 0;
+  int ipv6 = 0;
+  struct in6_addr *target_addr;
+  char icmp_src_addr_str[INET6_ADDRSTRLEN];
+  char target_addr_str[INET6_ADDRSTRLEN];
+  struct timeval now;
 
-  memset(&responder, 0, sizeof (responder));
-  int addr_len=sizeof(responder);
+  size_t packet_len = (size_t)header->caplen;
 
-  ev4.data.fd = rcvsock4;
-  ev4.events = EPOLLIN;
-  epoll_ctl(epfd, EPOLL_CTL_ADD, ev4.data.fd, &ev4);
+  uint16_t ethertype = *(packet + 12) *256 + *(packet + 13);
+  if (ethertype == 0x0800) {
+    ipv4 = 1;
+    ipv6 = 0;
+  } else if (ethertype == 0x86DD) {
+    ipv6 = 1;
+    ipv4 = 0;
+  }
 
-  ev6.data.fd = rcvsock6;
-  ev6.events = EPOLLIN;
-  epoll_ctl(epfd, EPOLL_CTL_ADD, ev6.data.fd, &ev6);
+  if (debug) {
+    if (ipv4) {
+      printf("\n======\nGot v4 packet, %ld bytes captured\n", packet_len);
+    } else if (ipv6) {
+      printf("\n======\nGot v6 packet, %ld bytes captured\n", packet_len);
+    } else printf("Packet was not IPv4 nor IPv6. Eth type = %04X\n",ethertype);
+  }
 
-  while(1){
-   	nfds = epoll_wait(epfd, events, 1, -1);
+  if (ipv4) {
+    ipv4_hdr = (struct iphdr *)(packet + 14); 
+    icmp_hdr = (struct icmphdr *)((const u_char *)ipv4_hdr+IP_HDR_LEN);
+    emb_ipv4_hdr = (struct iphdr *)((const u_char *)icmp_hdr+ICMP_HDR_LEN);
+    emb_tcp_hdr = (struct tcphdr *)((const u_char *)emb_ipv4_hdr+IP_HDR_LEN);
+
+    if (debug) {
+      print_ipv4_header((const u_char *)ipv4_hdr);
+      print_icmp_header((const u_char *)icmp_hdr);
+      // print ip header in icmp return payload
+      print_ipv4_header((const u_char*)emb_ipv4_hdr);
+      // Hexdump((const u_char*)emb_ipv4_hdr,8);
+      print_tcp_header((const u_char*)emb_tcp_hdr);
+    }
+    struct in_addr target;
+    memcpy(&target, &(emb_ipv4_hdr->daddr),4);
+    printf("%s,",inet_ntoa(target));
+    // TODO IPv4
+    // Check crc of original IP address
     
-    if (nfds == -1) {
-      perror("epoll_wait");
+    // IP address originating ICMP
+    struct in_addr src;
+    memcpy(&src, &(ipv4_hdr->saddr),4);
+    printf("%s,",inet_ntoa(src));
+    // Original TTL, encoded in IP ID field
+    printf("%d,", emb_ipv4_hdr->id);
+    // Verify checksum for target IP address
+    uint16_t target_checksum;
+    target_checksum = crc16(0, (uint8_t const *)&(target), 4);
+    if (target_checksum == emb_tcp_hdr->source) {
+      printf("T,");
+    } else {
+      printf("F,");
     }
-	
-     // for(i=0;i<nfds;i++) {
-    printf("!!!!!!!!!!Received packet!!!!!!!\n");
-    printf("Packet dump:\n");
-    memset(inpacket,0,MAX_PKT_SIZE);
-    rd_len = read(events[i].data.fd, inpacket, MAX_PKT_SIZE);
-    Hexdump((const void*) inpacket, rd_len);
-    if (events[i].data.fd == rcvsock4) {
-      print_ipv4_header((const u_char *)inpacket);
-    	print_icmp_header((const u_char *)inpacket+IP_HDR_LEN);
+    // Print elapsed time
+    uint32_t timestamp = ntohl(emb_tcp_hdr->seq);
+
+    // Get seconds from top of the hour, including milliseconds
+    struct timespec tp;
+    int ret = clock_gettime(CLOCK_REALTIME, &tp);
+    long sec_from_hour;
+    if (ret == 0) {
+      sec_from_hour = tp.tv_sec %3600;
+      if (sec_from_hour < timestamp/1000) { // we went across the top of the  hour
+        sec_from_hour += 3600;
+      }
+      // timestamp is an integer with the rightmost 3 digits being the milliseconds (*1000)
+      // printf("packet timestamp: %u, min from hour: %u, ms: %u\n", timestamp, sec_from_hour, tp.tv_nsec/1000000);
+
+      uint32_t elapsed_time = (sec_from_hour*1000 + tp.tv_nsec/1000000) - timestamp;
+      printf("elapsed time: %f", elapsed_time/1000.0);
     }
-    if (events[i].data.fd == rcvsock6) {
-      // print_ipv6_header((const u_char *)inpacket+ETH_HDRLEN);
-      // print_icmp6_header((const u_char *)inpacket+ETH_HDRLEN+IP6_HDR_LEN);
-      print_icmp6_header((const u_char *)inpacket);
+    printf("\n");
+    return;
+  }
+
+  // IPv6
+  ipv6_hdr = (struct ip6_hdr *)(packet + 14);
+  icmp6_hdr = (struct icmp6_hdr *)((uint8_t *)ipv6_hdr + IP6_HDR_LEN);
+  o_ipv6_hdr = (struct ip6_hdr *)((uint8_t *)icmp6_hdr + 8);
+
+  target_addr = &(o_ipv6_hdr->ip6_dst);
+  inet_ntop(AF_INET6, target_addr, target_addr_str, INET6_ADDRSTRLEN);
+  inet_ntop(AF_INET6, &(ipv6_hdr->ip6_src), icmp_src_addr_str, INET6_ADDRSTRLEN);
+
+  if (debug) {
+    print_ipv6_header((const u_char *)ipv6_hdr);
+    print_icmp6_header((const u_char *)icmp6_hdr); // generic icmp6 header
+  }
+
+  if (icmp6_hdr->icmp6_type == ICMP6_TIME_EXCEEDED || icmp6_hdr->icmp6_type == ICMP6_DST_UNREACH) {
+    gettimeofday(&now, NULL);
+    printf("%s,%s,%d,%lu,%lu",target_addr_str, icmp_src_addr_str, icmp6_hdr->icmp6_type, now.tv_sec, now.tv_usec);
+    
+    if (debug) {
+      printf(" ICMP Source IP : %s\n" , icmp_src_addr_str);
+      printf(" Target IP      : %s\n" , target_addr_str);
+      printf("Next header.    : %d\n", o_ipv6_hdr->ip6_nxt);
     }
-     // }
-  
-    // if ( recvfrom(rcvsock, &inpacket, sizeof(inpacket), 0, (struct sockaddr*)&src_addr, &addr_len) <= 0) {
-    //   printf("\nPacket receive failed!\n");
-    //   exit(1);
-    // }
+    if (o_ipv6_hdr->ip6_nxt == IPPROTO_TCP) {
+      tcp_hdr=(struct tcphdr*)((uint8_t *)o_ipv6_hdr + IP6_HDR_LEN);
+      printf(",%d", tcp_hdr->source);
+      if (debug) {
+        printf(" Source Port      : %u\n",ntohs(tcp_hdr->source));
+        printf(" Destination Port : %u\n",ntohs(tcp_hdr->dest));
+      }
+    } else if (o_ipv6_hdr->ip6_nxt == NEXTHDR_HOP || o_ipv6_hdr->ip6_nxt == NEXTHDR_DEST) {
+      uint32_t *payload = (uint32_t *)((uint8_t *)o_ipv6_hdr + 4); // Offset to EH payload(padding)
+      printf(",%d", *payload);
+    }
+    printf("\n");
+  } else {
+    printf("\n");
+    if (debug) {
+      print_icmp6_header((const u_char *)icmp6_hdr); // generic icmp6 header
+    }
   }
 }
 
 /*****************************************/
-int main (int argc, char const *argv[])
-{
-  // const char    *dest;
-  const char    *source;
-  struct tr_conf    *conf;  /* configuration defaults */
+void  daemonise() {
+  // Standard fork and exit parent, leave child running.
+  pid_t pid;
 
-  struct sockaddr   *from, *to;
-  struct addrinfo    hints, *res, *src_ip;
-  const char  *hostname = NULL;
-  char ch;
-  int error;
-  char  hbuf[NI_MAXHOST];
-  
-  struct sockaddr_in   from4, to4;
-  struct sockaddr_in6  from6, to6;
-  
-  int rcvsock4, rcvsock6;
-  int v4sock_errno = 0;
-  int v6sock_errno = 0;
-  
-  int proto, flag;
-  int enable = 1;
-  
-  conf = calloc(1, sizeof(struct tr_conf));
-  conf->incflag = 1;
-  conf->first_ttl = 1;
-  conf->proto = IPPROTO_UDP;
-  conf->max_ttl = IPDEFTTL;
-  conf->nprobes = 3;
-  
-	conf->port = 33434;
-	conf->ident = 666;
-	
-// // IPv4
-//   if (addr.ss_family == AF_INET) {
-// #ifdef HAVE_IP_PKTINFO
-//     // If on Linux
-//     proto = SOL_IP;
-//     flag = IP_PKTINFO;
-// #endif
-// #ifdef IP_RECVDSTADDR
-//     proto = IPPROTO_IP;
-//     // Set IP_RECVDSTADDR option (*BSD)
-//     flag = IP_RECVDSTADDR;
-// #endif
-//   } else if (addr.ss_family == AF_INET6) {
-// // IPv6
-// #ifdef IPV6_PKTINFO
-//     proto = IPPROTO_IPV6;
-//     flag = SSO_IPV6_RECVPKTINFO;
-// #endif
-//   }
-//   return setsockopt(socket, proto, flag, &enable, sizeof(enable));
-
-  // IPv6
-  #ifdef IPV6_PKTINFO
-      proto = IPPROTO_IPV6;
-      flag = SSO_IPV6_RECVPKTINFO;
-  #endif
-  if ((rcvsock6 = socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6)) == -1)
-    v6sock_errno = errno;
-
-  if (v6sock_errno != 0) {
-    errx(5, rcvsock6 < 0 ? "socket(ICMPv6)" : "socket(SOCK_DGRAM)");
-    }
-
-  #ifdef HAVE_IP_PKTINFO
-      // If on Linux
-      proto = SOL_IP;
-      flag = IP_PKTINFO;
-  #endif
-  #ifdef IP_RECVDSTADDR
-      proto = IPPROTO_IP;
-      // Set IP_RECVDSTADDR option (*BSD)
-      flag = IP_RECVDSTADDR;
-  #endif
-  
-  // IPv4
-  if ((rcvsock4 = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) == -1) {
-    v4sock_errno = errno;
+  pid = fork();
+  if (pid < 0) {
+    exit(-1);
   }
-  if (v4sock_errno != 0) {
-    errx(5,rcvsock4 < 0 ? "icmp socket" : "raw socket");
+  if (pid > 0) { // Exit the parent, let the child run
+    exit(EXIT_SUCCESS);
+  }
+}
+
+/*****************************************/
+int main (int argc, char **argv)
+{
+  int ch ;
+
+  char filter_exp[1024];           // The filter expression
+  char errbuff[PCAP_ERRBUF_SIZE];  // error buffer
+  struct bpf_program fp;           // The compiled filter expression
+  pcap_t *pcap_handle ;            // packet capture handle
+
+  while (((ch = getopt(argc,argv, "i:k:l:x"))) != -1) {
+    switch(ch) {
+      case 'i':
+        // interface name of client side address
+        interface = strdup(optarg) ;
+        break;
+      case 'k':
+        // interface IPv4 address of 'listen' address
+        host_v4 = strdup(optarg) ;
+        break ;
+      case 'l':
+        // interface IPv6 address of 'listen' address
+        host_v6 = strdup(optarg) ;
+        break ;
+      case 'x': // Turn on debug logging
+        debug = 1;
+        break;
+      default:
+        fprintf(stderr, "listener [-d]\n") ;
+        exit (EXIT_FAILURE);
+    }
+  }
+
+  /* the PCAP capture filter  - ICMP(v6) traffic only*/
+  if (!version) {
+    sprintf(filter_exp,"dst host %s or dst host %s and (icmp or icmp6)", host_v6, host_v4);
+    }
+  else if (version == 4) {
+    sprintf(filter_exp,"(dst host %s and icmp)", host_v4);
+    }
+  else if (version == 6) {
+    sprintf(filter_exp,"dst host %s and icmp6",host_v6);
     }
 
-	printf("Receive socket v4: %d, receive socket v6: %d\n", rcvsock4, rcvsock6);
+  if (debug) printf("PCAP Filter: %s\n",filter_exp);
 
-  /* specify to tell receiving interface */
-  if (setsockopt(rcvsock6, IPPROTO_IPV6, SSO_IPV6_RECVPKTINFO, &enable, sizeof(enable)))
-    err(1, "setsockopt(IPV6_RECVPKTINFO)");
-  if (setsockopt(rcvsock6, IPPROTO_IPV6, IPV6_HDRINCL, &enable, sizeof(enable)))
-    err(1, "setsockopt(IPV6_HDRINCL)");
-  // /* specify to tell hoplimit field of received IPv6 header */
-  // if (setsockopt(rcvsock6, proto, flag, &enable, sizeof(enable)))
-  //   err(1, "setsockopt(IPV6_RECVHOPLIMIT)");
-  int seq = 0;
-  int ttl = 1;
-  char addr_str[256];
+  /* open capture device */  
+  if ((pcap_handle = pcap_open_live(interface, SNAP_LEN, 1, 1, errbuff)) == NULL) {
+    fprintf(stderr, "Couldn't open client device %s: %s\n", interface, errbuff);
+    exit(EXIT_FAILURE) ;
+  }
 
-	listen_for_icmp(rcvsock4, rcvsock6);
+  /* compile the filter expression */
+  if (pcap_compile(pcap_handle, &fp, filter_exp, 0, 0) == -1) {
+    fprintf(stderr, "Couldn't parse filter %s: %s\n", filter_exp, pcap_geterr(pcap_handle));
+    exit(EXIT_FAILURE) ;
+  }
 
+  /* install the filter */
+  if (pcap_setfilter(pcap_handle, &fp) == -1) {
+    fprintf(stderr, "Couldn't install filter %s: %s\n", filter_exp, pcap_geterr(pcap_handle));
+    exit(EXIT_FAILURE) ;
+  }
+  
+  // Print header for CSV putput
+  printf("Orig Dest, Src addr ICMP, ICMP type, arrival timestamp, other data\n");
+
+  // daemonise();
+
+  pcap_loop(pcap_handle, -1, listen_for_icmp, NULL);
   return 0;
 }
