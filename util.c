@@ -342,12 +342,16 @@ int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket
     long sec_from_hour;
     uint32_t timestamp;
     if (ret == 0) {
-      printf("seconds: %ld\n", tp.tv_sec);
-      printf("nanoseconds: %ld\n", tp.tv_nsec);
+      if (debug) {
+        printf("seconds: %ld\n", tp.tv_sec);
+        printf("nanoseconds: %ld\n", tp.tv_nsec);
+      }
       sec_from_hour = tp.tv_sec %3600;
       // timestamp is an integer with the rightmost 3 digits being the milliseconds (*1000)
       timestamp = sec_from_hour*1000 + tp.tv_nsec/1000000;
-      printf("timestamp: %d %d %d\n", sec_from_hour*1000, tp.tv_nsec/1000000, timestamp);
+      if (debug) {
+        printf("timestamp: %d %d %d\n", sec_from_hour*1000, tp.tv_nsec/1000000, timestamp);
+      }
     }
     tcphdr->seq = htonl(timestamp);
     tcphdr->ack_seq = 0;
@@ -372,7 +376,6 @@ int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket
   ip->ihl = 5;
 	ip->tos = 0;
 	ip->tot_len = htons(frame_len - ETH_HDRLEN);
-  printf("IP total len: %d\n",ntohs(ip->tot_len));
   ip->id = ttl; // store the original TTL here
 	ip->frag_off = 0;
   ip->ttl = ttl;
@@ -549,7 +552,7 @@ int build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacke
 }
 
 /***************************************************/
-void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct probe *probe) {
+void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct probe *probe, FILE *log_f) {
   int len, addr_len;
   uint8_t outpacket[1514];
   icmp_type = ICMP_ECHO; /* default ICMP code/type */
@@ -622,14 +625,13 @@ void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct
   // uint8_t dst_mac[] = {0x16, 0x98, 0x77, 0x25, 0xf5, 0x64}; // mac mini @home
 	memcpy(sadr_ll.sll_addr, dst_mac, ETH_ALEN);
   
-  printf("frame_len = %d\n",frame_len);
   len = sendto(sndsock, outpacket, frame_len, 0, (const struct sockaddr*)&sadr_ll, sizeof(struct sockaddr_ll));
 	if (debug) printf("sent %d bytes on socket %d\n", len, sndsock);
   if (len == -1 || len != frame_len)  {
     if (len == -1) {
 	    warn("sendto");    	
     }
-    if (debug) printf("sendto wrote %d chars, ret=%d\n", len, len);
+    if (debug) fprintf(log_f, "sendto wrote %d chars, ret=%d\n", len, len);
     (void) fflush(stdout);
   }
 }

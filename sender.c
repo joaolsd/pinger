@@ -66,6 +66,8 @@
 #define SOL_IP IP_PKTINFO
 #endif
 
+#define LINEBUF_SIZE 128 
+
 int is_daemon = 0;
 int debug = 0;
 int ret = 0;
@@ -83,6 +85,21 @@ void usage(char *progname) {
   printf("  addr_family,target addr,protocol,options\n");
 	exit(0);
 }
+
+/*****************************************/
+void  daemonise() {
+  // Standard fork and exit parent, leave child running.
+  pid_t pid;
+
+  pid = fork();
+  if (pid < 0) {
+    exit(-1);
+  }
+  if (pid > 0) { // Exit the parent, let the child run
+    exit(EXIT_SUCCESS);
+  }
+}
+
 /*****************************************/
 void parse_input_line(char *str, struct probe* probe)
 {
@@ -221,13 +238,13 @@ void socket_non_block (int socket) {
   int flags, s;
   flags = fcntl(socket, F_GETFL, 0);
   if (flags == -1) {
-    perror ("fcntl error");
+    perror("fcntl error");
     exit(-1);
   }
   flags |= O_NONBLOCK; // Add non-blocking flag
-  s = fcntl (socket, F_SETFL, flags);
+  s = fcntl(socket, F_SETFL, flags);
   if (s == -1) {
-    perror ("fcntl error");
+    perror("fcntl error");
     exit(-1);
   }
 }
@@ -294,6 +311,7 @@ int main (int argc, char const *argv[])
   int socket_fd, fd;
   int new_fd = 0;
   FILE *file;
+  FILE *log_f = stdout;
   
   struct probe probe;
 
@@ -322,10 +340,11 @@ int main (int argc, char const *argv[])
   char *progname = basename((char *)argv[0]);
   
   char *input_f;
+  char *log_file_name = NULL;
   char *lineptr;
-  lineptr = calloc(128, 1);
+  lineptr = calloc(LINEBUF_SIZE, 1);
   
-  while ((ch = getopt(argc, (char * const *)argv, "df:hitx")) != (char)-1) {
+  while ((ch = getopt(argc, (char * const *)argv, "df:hil:tx")) != (char)-1) {
     // char *optarg;
     switch (ch) {
       case 'h':
@@ -344,6 +363,8 @@ int main (int argc, char const *argv[])
       case 'i':
         conf->proto = IPPROTO_ICMP;
         break;
+      case 'l':
+        log_file_name = optarg;
       case 't':
         conf->proto = IPPROTO_TCP;
         break;
@@ -356,7 +377,7 @@ int main (int argc, char const *argv[])
   }
 
   // Non option argument
-  lineptr = (char *)argv[optind];
+  // strncpy(lineptr, (char *)argv[optind], 128);
 
   // Initialise source addresses
   source_v4_str = "172.104.147.241"; // testbed-de
@@ -376,26 +397,22 @@ int main (int argc, char const *argv[])
   // if ((error = getaddrinfo(source_v6_str , NULL, &hints, &source_v6)))
   //   errx(1, "%s", gai_strerror(error));
   
+  // Open log file
+  if (log_file_name) {
+    log_f = fopen(log_file_name, "a");
+  }
+
   // Open file or socket
   if (file_input) {
     if (is_daemon) {
+      daemonise();
       socket_fd = setup_unix_socket();
       // Start listening on socket
       if (listen(socket_fd, SOMAXCONN) == -1) {
         perror("Socket listen error");
         exit(-1);
       }
-      while (new_fd <=0) {
-        new_fd = accept(socket_fd, NULL, NULL);
-        if (new_fd == -1) {
-          if (errno == EAGAIN) {
-            continue;
-          } else {
-            perror("Error accepting socket");
-            exit(-2);
-          }
-        }
-      }
+
     } else {
       file = fopen(input_f, "r");
       if (file == NULL) {
@@ -414,13 +431,24 @@ int main (int argc, char const *argv[])
   do {
     if (file_input) {
       if (is_daemon) {
-        if (read(new_fd, lineptr, sizeof(lineptr)) == -1) {
+        while (new_fd <=0) {
+          new_fd = accept(socket_fd, NULL, NULL);
+          if (new_fd == -1) {
+            if (errno == EAGAIN) {
+              continue;
+            } else {
+              perror("Error accepting socket");
+              exit(-2);
+            }
+          }
+        }
+        if (read(new_fd, lineptr, LINEBUF_SIZE) == -1) {
           if (errno == EAGAIN) {
             continue;
           }
           perror("Error reading from socket");
         }
-        if (debug) printf("read new data: %s\n", lineptr);
+        if (debug) fprintf(log_f, "read new data: %s\n", lineptr);
       } else {
         size_t n = 128;
         ret = getline(&lineptr, &n, file);
@@ -449,16 +477,20 @@ int main (int argc, char const *argv[])
     char addr_str[256];
     if (probe.addr_family == 6) {
       memcpy((void *)&(probe.src_addr), (void *)source_v6, sizeof(struct in6_addr));
-      printf("Sending probe to %s\n", inet_ntop(AF_INET6, &(probe.dst_addr), addr_str, 256));
+      if (debug) {
+        fprintf(log_f, "Sending probe to %s\n", inet_ntop(AF_INET6, &(probe.dst_addr), addr_str, 256));
+      }
       sndsock = send_socket_v6;
     } else {
       memcpy((void *)&(probe.src_addr), (void *)source_v4, sizeof(struct in_addr));
-      printf("Sending probe to %s\n", inet_ntop(AF_INET, &(probe.dst_addr), addr_str, 256));
+      if (debug) {
+        printf("Sending probe to %s\n", inet_ntop(AF_INET, &(probe.dst_addr), addr_str, 256));
+      }
       sndsock = send_socket_v4;
     }
 
     for (ttl = i_ttl; ttl <= f_ttl; ttl++) {
-      send_probe(conf, sndsock, seq, ttl, &probe);
+      send_probe(conf, sndsock, seq, ttl, &probe, log_f);
     }
 
   } while(file_input);

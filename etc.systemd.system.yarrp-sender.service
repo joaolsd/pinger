@@ -1,5 +1,5 @@
 [Unit]
-Description=yarrp-server
+Description=yarrp-sender
 
 After=syslog.target network.target
 Before=nginx.service
@@ -9,8 +9,8 @@ PartOf=nginx.service
 Type=forking
 #PIDFile=
 ExecStartPre=
-ExecStart=/usr/local/bin/sender -d
-ExecReload=/usr/local/bin/sender -d
+ExecStart=/usr/local/bin/sender -d -f /tmp/pinger/pinger_socket
+ExecReload=/usr/local/bin/sender -d -f /tmp/pinger/pinger_socket
 ExecStop=/usr/bin/pkill sender
 
 [Install]

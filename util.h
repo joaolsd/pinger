@@ -28,6 +28,8 @@ struct packetdata {
 	u_int32_t usec;
 };
 
+void  daemonise();
+
 uint16_t checksum(uint16_t *buffer, int size);
 uint16_t tcp_checksum_ipv4(const void *buff, size_t len, size_t length, in_addr_t *src_addr, in_addr_t *dest_addr);
 uint16_t udp_checksum_ipv4(const void *buff, size_t len, size_t length, in_addr_t *src_addr, in_addr_t *dest_addr);
@@ -39,6 +41,6 @@ void ether_header(int IP_v, uint8_t *outpacket);
 
 int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket, struct probe *probe);
 int build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacket, struct probe *probe);
-void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct probe *probe);
+void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct probe *probe, FILE *log_f);
 
 #endif // UTIL_H

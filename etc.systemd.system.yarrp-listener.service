@@ -1,0 +1,18 @@
+[Unit]
+Description=yarrp-listener
+
+After=syslog.target network.target
+Before=nginx.service
+PartOf=nginx.service
+
+[Service]
+Type=forking
+#PIDFile=
+ExecStartPre=
+ExecStart=/usr/local/bin/listener -o /var/log/yarrp.log
+ExecReload=/usr/local/bin/listener -o /var/log/yarrp.log
+ExecStop=/usr/bin/pkill listener
+
+[Install]
+WantedBy=multi-user.target
+
