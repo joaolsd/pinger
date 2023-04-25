@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 // #include <sys/sysctl.h>
 #include <sys/time.h>
@@ -25,6 +26,7 @@
 #include <unistd.h>
 #include "sender.h"
 #include "util.h"
+#include <libgen.h>
 
 #include <net/if.h>
 #include <sys/ioctl.h>
@@ -71,11 +73,12 @@
 int is_daemon = 0;
 int debug = 0;
 int ret = 0;
+FILE *log_f;
 
 /*****************************************/
 void usage(char *progname) {
-  printf("pinger [-f <filename>] [-d] [-h] [-6] [-t] [-i] [\"probe data\"]");
-  printf("-f: path to an input file or unix socket\n");
+  printf("pinger [-f <endpoint>] [-d] [-h] [-6] [-t] [-i] [\"probe data\"]");
+  printf("-f: path to an input file, unix socket or IP_address:UDP_port\n");
   printf("-d: daemonise (must use a socket to send input)\n");
   printf("-i: use ICMP\n");
   printf("-t: use TCP\n");
@@ -248,26 +251,119 @@ void socket_non_block (int socket) {
     exit(-1);
   }
 }
+
+/*****************************************/
+// Setup a UDP socket to listen on
+int setup_udp_socket(char *hostport) {
+  char *port;
+  char *hostname;
+  struct addrinfo hints, *res, *p;
+  int sockfd;
+  int status;
+  char ipstr[INET6_ADDRSTRLEN];
+  int fd_count;
+
+  int yes = 1;
+  
+  char *token = strchr(hostport, ':');
+  if (token == NULL) {
+    printf("Invalid string format\n");
+    return 1;
+  }
+  *token = '\0'; // replace ':' with null character to split the string
+  hostname = hostport; // first part of string is the  host
+  port = token + 1; // second part is the port
+
+  memset(&hints, 0, sizeof hints);
+  hints.ai_family = AF_UNSPEC; // use IPv4 or IPv6, whichever
+  hints.ai_socktype = SOCK_DGRAM;
+  hints.ai_protocol=0;
+  hints.ai_flags = AI_PASSIVE|AI_ADDRCONFIG; // fill in my IP for me
+
+  if ((status = getaddrinfo(hostname, port, &hints, &res)) != 0) {
+      fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
+      return 1;
+  }
+
+  p = res; // use only the first item in the response even if there are more
+  void *addr;
+  char *ipver;
+
+  // get the pointer to the address itself,
+  // different fields in IPv4 and IPv6:
+  if (p->ai_family == AF_INET) { // IPv4
+      struct sockaddr_in *ipv4 = (struct sockaddr_in *)p->ai_addr;
+      addr = &(ipv4->sin_addr);
+  } else { // IPv6
+      struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)p->ai_addr;
+      addr = &(ipv6->sin6_addr);
+  }
+
+  // create a socket:
+  sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+  if (sockfd < 0) {
+      perror("socket");
+      exit(1);
+  }
+
+  // set socket options to allow reuse of address:
+  if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
+      perror("setsockopt");
+      exit(1);
+  }
+
+  // bind the socket to the address:
+  if (bind(sockfd, p->ai_addr, p->ai_addrlen) < 0) {
+      close(sockfd);
+      perror("Error while binding");
+      exit(1);
+  }
+
+  // listen on the socket:
+  // if (listen(sockfd, 10) < 0) {
+  //     close(sockfd);
+  //     perror("Error while trying to listen");
+  //     exit(1);
+  // }
+  inet_ntop(p->ai_family, addr, ipstr, sizeof ipstr);
+  if (debug) fprintf(log_f, "Socket bound and listening on %s:%s\n", ipstr, port);
+
+  freeaddrinfo(res);
+  return sockfd;
+}
+
+
 /*****************************************/
 // Setup a Unix domain socket to listen on
-int setup_unix_socket() {
+int setup_unix_socket(char *input_f) {
   int socket_fd;
   int result;
   struct sockaddr_un addr;
-  char *socket_path = "/tmp/pinger/pinger_socket";
-  
+  char socket_path[256];
+  struct stat statbuf;
+
+  if (stat(input_f, &statbuf) == 0) {
+    if (statbuf.st_mode & S_IFMT == S_IFSOCK) {
+      strncpy(socket_path, input_f, sizeof(socket_path));
+    } else { // default path for socket
+      strcpy(socket_path,"/tmp/pinger/pinger_socket");
+    }
+  }
   // Linux controls socket file permissions based on the permissions of the
   // directory that contains the socket file, not via direct permission
   // settings
   // So, create a directory with the proper permissions
+
+  char *dir_name = dirname(socket_path);
+  // char *base_name = basename(socket_path);
   umask(0000);
-  if (mkdir("/tmp/pinger/", 0777)) {
+  if (mkdir(dir_name, 0777)) {
     if (errno != EEXIST) { // If the error is that it already exists ->no prob
       perror("Can't create directory to locate socket");
       exit(-1);
     }
   }
-  chmod("/tmp/pinger/", 0777);
+  chmod(dir_name, 0777);
 
   // Delete the socket file, if left over from previous runs
   if( access( socket_path, F_OK ) != -1 ) {
@@ -293,6 +389,12 @@ int setup_unix_socket() {
   }
   // make the socket non-blocking
   socket_non_block(socket_fd);
+  // Start listening on socket
+  if (listen(socket_fd, SOMAXCONN) == -1) {
+    perror("Socket listen error");
+    exit(-1);
+  }
+
   return socket_fd;
 }
 /*****************************************/
@@ -311,7 +413,6 @@ int main (int argc, char const *argv[])
   int socket_fd, fd;
   int new_fd = 0;
   FILE *file;
-  FILE *log_f = stdout;
   
   struct probe probe;
 
@@ -342,6 +443,9 @@ int main (int argc, char const *argv[])
   char *input_f;
   char *log_file_name = NULL;
   char *lineptr;
+  int udp_socket;
+
+  log_f = stdout; // default
   lineptr = calloc(LINEBUF_SIZE, 1);
   
   while ((ch = getopt(argc, (char * const *)argv, "df:hil:tx")) != (char)-1) {
@@ -400,19 +504,23 @@ int main (int argc, char const *argv[])
   // Open log file
   if (log_file_name) {
     log_f = fopen(log_file_name, "a");
+    if (log_f == NULL) {
+      perror("Can't open log file");
+      exit(1);
+    }
   }
 
   // Open file or socket
   if (file_input) {
     if (is_daemon) {
       daemonise();
-      socket_fd = setup_unix_socket();
-      // Start listening on socket
-      if (listen(socket_fd, SOMAXCONN) == -1) {
-        perror("Socket listen error");
-        exit(-1);
+      if (strchr(input_f, ':') != NULL) { // hostname:port?
+        socket_fd = setup_udp_socket(input_f);
+        udp_socket = 1;
+      } else { // assume it is a local path to a UNIX socket
+        socket_fd = setup_unix_socket(input_f);
+        udp_socket = 0;
       }
-
     } else {
       file = fopen(input_f, "r");
       if (file == NULL) {
@@ -431,16 +539,20 @@ int main (int argc, char const *argv[])
   do {
     if (file_input) {
       if (is_daemon) {
-        while (new_fd <=0) {
-          new_fd = accept(socket_fd, NULL, NULL);
-          if (new_fd == -1) {
-            if (errno == EAGAIN) {
-              continue;
-            } else {
-              perror("Error accepting socket");
-              exit(-2);
+        if (udp_socket == 0) {
+          while (new_fd <=0) {
+            new_fd = accept(socket_fd, NULL, NULL);
+            if (new_fd == -1) {
+              if (errno == EAGAIN) {
+                continue;
+              } else {
+                perror("Error accepting socket");
+                exit(-2);
+              }
             }
           }
+        } else {
+          new_fd = socket_fd;
         }
         if (read(new_fd, lineptr, LINEBUF_SIZE) == -1) {
           if (errno == EAGAIN) {
@@ -450,15 +562,16 @@ int main (int argc, char const *argv[])
         }
         if (debug) fprintf(log_f, "read new data: %s\n", lineptr);
       } else {
-        size_t n = 128;
+        size_t n = LINEBUF_SIZE;
         ret = getline(&lineptr, &n, file);
         if (ret == -1) exit(0);
       }
     } else {
-        size_t n = 128;
+        size_t n = LINEBUF_SIZE;
         ret = getline(&lineptr, &n, file);
         if (ret == -1) exit(0);
     }
+    new_fd = 0;
     parse_input_line(lineptr,&probe);
 
     int seq = 0;
