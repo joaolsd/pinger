@@ -104,11 +104,17 @@ void  daemonise() {
 }
 
 /*****************************************/
-void parse_input_line(char *str, struct probe* probe)
+int parse_options(char * options) {
+  return 1; // TODO, once we define what options we want to use
+}
+
+/*****************************************/
+int parse_input_line(char *str, struct probe* probe)
 {
   char *dst_addr, *options;
   struct addrinfo hints, *res, *src_ip;
   int error;
+  struct sockaddr addr_in;
   // 4,192.168.1.1,u,options
   // 1st field: 4 or 6, for IPv4/IPv6
   // 2nd field: IPv(4|6) address
@@ -118,10 +124,22 @@ void parse_input_line(char *str, struct probe* probe)
   // 6th field: options (e.g. extension header for IPv6)
   probe->addr_family = str[0]-'0'; // first field, single char is a 4 or 6
   dst_addr = strtok(str+2, ","); // 2nd field is the IP address
+  // Check for valid IPv4 or IPv6 address
+  if (probe->addr_family == 4) {
+    if (!inet_pton(AF_INET, dst_addr, (void * restrict) &addr_in)) return 0;
+  } else if (probe->addr_family == 6) {
+    if (!inet_pton(AF_INET6, dst_addr, (void * restrict) &addr_in)) return 0;
+  } else {
+    return 0;
+  }
   probe->protocol = *(strtok(NULL,",")); // transport protocol
   probe->initial_ttl = atoi(strtok(NULL,","));
+  if (probe->initial_ttl < 0 || probe->initial_ttl > 255) return 0;
   probe->final_ttl = atoi(strtok(NULL,","));
+  if (probe->final_ttl < 0 || probe->final_ttl > 255) return 0;
+  if (probe->final_ttl < probe->initial_ttl) return 0;
   options = strtok(NULL,","); // extension header, if any
+  if (!parse_options(options)) return 0;
 
   switch (probe->protocol) {
     case 'u':
@@ -143,6 +161,7 @@ void parse_input_line(char *str, struct probe* probe)
       break;
     default:
       errx(1, "Unknown protocol in input line: %d\n", probe->protocol);
+      return 0;
   }
 
   memset(&hints, 0, sizeof(hints));
@@ -158,7 +177,7 @@ void parse_input_line(char *str, struct probe* probe)
         errx(1, "Mismatch between address family and address\n");
   }
   if (probe->addr_family == 4) {
-  memcpy(&(probe->dst_addr), &(((struct sockaddr_in *)(res->ai_addr))->sin_addr), sizeof(struct in_addr));
+    memcpy(&(probe->dst_addr), &(((struct sockaddr_in *)(res->ai_addr))->sin_addr), sizeof(struct in_addr));
   } else {
     memcpy(&(probe->dst_addr), &(((struct sockaddr_in6 *)(res->ai_addr))->sin6_addr), sizeof(struct in6_addr));
   }
@@ -170,7 +189,7 @@ void parse_input_line(char *str, struct probe* probe)
       if (!hostname) {
         printf("malloc error for hostname");
         freeaddrinfo(res);
-        return;
+        return 0;
       }
       printf("Hostname: %s\n", hostname);
     if (res->ai_next) {
@@ -186,6 +205,7 @@ void parse_input_line(char *str, struct probe* probe)
   // Process options
   strncpy((char *)&(probe->options), options, sizeof(probe->options));
   freeaddrinfo(res);
+  return 1;
 }
 /*****************************************/
 int open_v6_socket() {
@@ -572,7 +592,9 @@ int main (int argc, char const *argv[])
         if (ret == -1) exit(0);
     }
     new_fd = 0;
-    parse_input_line(lineptr,&probe);
+    if (!parse_input_line(lineptr,&probe)) {
+      continue;
+    }
 
     int seq = 0;
     int i_ttl, f_ttl, ttl;

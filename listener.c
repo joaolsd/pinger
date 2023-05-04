@@ -28,6 +28,7 @@
 #include <sys/uio.h>
 #include <unistd.h>
 #include <sys/epoll.h>
+#include <signal.h>
 
 #include "dbg-util.h"
 #include "util.h"
@@ -48,10 +49,22 @@ int debug = 0;
 static char *interface = "eth0";
 static char *host_v6 = "2a01:7e01::f03c:91ff:fed5:395";
 static char *host_v4 = "172.104.147.241";
-static int  is_daemon = 1;
+static int  is_daemon = 0;
 static char *ofilename = 0;
 static int version = 0 ;
 static FILE *ofile;
+
+/*****************************************/
+// Handle SIGHUP for log rotation
+void handle_sighup(int sig) {
+    // close the file descriptor to close
+    fclose(ofile);
+    
+    // open the new file descriptor
+    if ( (ofile = fopen(ofilename, "a")) == NULL) {
+      perror("can't open new output/log file");
+    }
+}
 
 /*****************************************/
 void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
@@ -103,88 +116,91 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
       // Hexdump((const u_char*)emb_ipv4_hdr,8);
       print_tcp_header((const u_char*)emb_tcp_hdr);
     }
-    struct in_addr target;
-    memcpy(&target, &(emb_ipv4_hdr->daddr),4);
-    fprintf(ofile, "%s,",inet_ntoa(target));
-    // IPv4
-    // TODO Check crc of original IP address
-    
-    // IP address originating ICMP
-    struct in_addr src;
-    memcpy(&src, &(ipv4_hdr->saddr),4);
-    fprintf(ofile, "%s,",inet_ntoa(src));
-    // Original TTL, encoded in IP ID field
-    fprintf(ofile, "%d,", emb_ipv4_hdr->id);
-    // Verify checksum for target IP address
-    uint16_t target_checksum;
-    target_checksum = crc16(0, (uint8_t const *)&(target), 4);
-    if (target_checksum == emb_tcp_hdr->source) {
-      fprintf(ofile, "T,");
+    if (icmp_hdr->type == 11 || icmp_hdr->type == 1) { // Process time exceeded or dest unreachable
+      struct in_addr target;
+      memcpy(&target, &(emb_ipv4_hdr->daddr),4);
+      fprintf(ofile, "%s,",inet_ntoa(target));
+      // IPv4
+      // TODO Check crc of original IP address
+      
+      // IP address originating ICMP
+      struct in_addr src;
+      memcpy(&src, &(ipv4_hdr->saddr),4);
+      fprintf(ofile, "%s,",inet_ntoa(src));
+      // Original TTL, encoded in IP ID field
+      fprintf(ofile, "%d,", emb_ipv4_hdr->id);
+      // Verify checksum for target IP address
+      uint16_t target_checksum;
+      target_checksum = crc16(0, (uint8_t const *)&(target), 4);
+      if (target_checksum == emb_tcp_hdr->source) {
+        fprintf(ofile, "T,");
+      } else {
+        fprintf(ofile, "F,");
+      }
+      // Print elapsed time
+      uint32_t timestamp = ntohl(emb_tcp_hdr->seq);
+
+      // Get seconds from top of the hour, including milliseconds
+      struct timespec tp;
+      int ret = clock_gettime(CLOCK_REALTIME, &tp);
+      long sec_from_hour;
+      if (ret == 0) {
+        sec_from_hour = tp.tv_sec %3600;
+        if (sec_from_hour < timestamp/1000) { // we went across the top of the  hour
+          sec_from_hour += 3600;
+        }
+        // timestamp is an integer with the rightmost 3 digits being the milliseconds (*1000)
+        // printf("packet timestamp: %u, min from hour: %u, ms: %u\n", timestamp, sec_from_hour, tp.tv_nsec/1000000);
+
+        uint32_t elapsed_time = (sec_from_hour*1000 + tp.tv_nsec/1000000) - timestamp;
+        fprintf(ofile, "%f", elapsed_time/1000.0);
+      }
+      fprintf(ofile, "\n");
     } else {
-      fprintf(ofile, "F,");
-    }
-    // Print elapsed time
-    uint32_t timestamp = ntohl(emb_tcp_hdr->seq);
-
-    // Get seconds from top of the hour, including milliseconds
-    struct timespec tp;
-    int ret = clock_gettime(CLOCK_REALTIME, &tp);
-    long sec_from_hour;
-    if (ret == 0) {
-      sec_from_hour = tp.tv_sec %3600;
-      if (sec_from_hour < timestamp/1000) { // we went across the top of the  hour
-        sec_from_hour += 3600;
-      }
-      // timestamp is an integer with the rightmost 3 digits being the milliseconds (*1000)
-      // printf("packet timestamp: %u, min from hour: %u, ms: %u\n", timestamp, sec_from_hour, tp.tv_nsec/1000000);
-
-      uint32_t elapsed_time = (sec_from_hour*1000 + tp.tv_nsec/1000000) - timestamp;
-      fprintf(ofile, "%f", elapsed_time/1000.0);
-    }
-    fprintf(ofile, "\n");
-    fflush(ofile);
-    return;
-  }
-
-  // IPv6
-  ipv6_hdr = (struct ip6_hdr *)(packet + 14);
-  icmp6_hdr = (struct icmp6_hdr *)((uint8_t *)ipv6_hdr + IP6_HDR_LEN);
-  o_ipv6_hdr = (struct ip6_hdr *)((uint8_t *)icmp6_hdr + 8);
-
-  target_addr = &(o_ipv6_hdr->ip6_dst);
-  inet_ntop(AF_INET6, target_addr, target_addr_str, INET6_ADDRSTRLEN);
-  inet_ntop(AF_INET6, &(ipv6_hdr->ip6_src), icmp_src_addr_str, INET6_ADDRSTRLEN);
-
-  if (debug) {
-    print_ipv6_header((const u_char *)ipv6_hdr);
-    print_icmp6_header((const u_char *)icmp6_hdr); // generic icmp6 header
-  }
-
-  if (icmp6_hdr->icmp6_type == ICMP6_TIME_EXCEEDED || icmp6_hdr->icmp6_type == ICMP6_DST_UNREACH) {
-    gettimeofday(&now, NULL);
-    fprintf(ofile, "%s,%s,%d,%lu,%lu",target_addr_str, icmp_src_addr_str, icmp6_hdr->icmp6_type, now.tv_sec, now.tv_usec);
-    
-    if (debug) {
-      printf(" ICMP Source IP : %s\n" , icmp_src_addr_str);
-      printf(" Target IP      : %s\n" , target_addr_str);
-      printf("Next header.    : %d\n", o_ipv6_hdr->ip6_nxt);
-    }
-    if (o_ipv6_hdr->ip6_nxt == IPPROTO_TCP) {
-      tcp_hdr=(struct tcphdr*)((uint8_t *)o_ipv6_hdr + IP6_HDR_LEN);
-      printf(",%d", tcp_hdr->source);
       if (debug) {
-        printf(" Source Port      : %u\n",ntohs(tcp_hdr->source));
-        printf(" Destination Port : %u\n",ntohs(tcp_hdr->dest));
+        print_icmp6_header((const u_char *)icmp_hdr);
       }
-    } else if (o_ipv6_hdr->ip6_nxt == NEXTHDR_HOP || o_ipv6_hdr->ip6_nxt == NEXTHDR_DEST) {
-      uint32_t *payload = (uint32_t *)((uint8_t *)o_ipv6_hdr + 4); // Offset to EH payload(padding)
-      printf(",%d", *payload);
     }
-    fprintf(ofile, "\n");
-  } else {
-    fprintf(ofile, "\n");
+  } else if (ipv6) {
+    // IPv6
+    ipv6_hdr = (struct ip6_hdr *)(packet + 14);
+    icmp6_hdr = (struct icmp6_hdr *)((uint8_t *)ipv6_hdr + IP6_HDR_LEN);
+    o_ipv6_hdr = (struct ip6_hdr *)((uint8_t *)icmp6_hdr + 8);
+
+    target_addr = &(o_ipv6_hdr->ip6_dst);
+    inet_ntop(AF_INET6, target_addr, target_addr_str, INET6_ADDRSTRLEN);
+    inet_ntop(AF_INET6, &(ipv6_hdr->ip6_src), icmp_src_addr_str, INET6_ADDRSTRLEN);
+
     if (debug) {
+      print_ipv6_header((const u_char *)ipv6_hdr);
       print_icmp6_header((const u_char *)icmp6_hdr); // generic icmp6 header
+    }
+
+    if (icmp6_hdr->icmp6_type == ICMP6_TIME_EXCEEDED || icmp6_hdr->icmp6_type == ICMP6_DST_UNREACH) {
+      gettimeofday(&now, NULL);
+      fprintf(ofile, "%s,%s,%d,%lu,%lu",target_addr_str, icmp_src_addr_str, icmp6_hdr->icmp6_type, now.tv_sec, now.tv_usec);
+      
+      if (debug) {
+        printf(" ICMP Source IP : %s\n" , icmp_src_addr_str);
+        printf(" Target IP      : %s\n" , target_addr_str);
+        printf("Next header.    : %d\n", o_ipv6_hdr->ip6_nxt);
+      }
+      if (o_ipv6_hdr->ip6_nxt == IPPROTO_TCP) {
+        tcp_hdr=(struct tcphdr*)((uint8_t *)o_ipv6_hdr + IP6_HDR_LEN);
+        printf(",%d", tcp_hdr->source);
+        if (debug) {
+          printf(" Source Port      : %u\n",ntohs(tcp_hdr->source));
+          printf(" Destination Port : %u\n",ntohs(tcp_hdr->dest));
+        }
+      } else if (o_ipv6_hdr->ip6_nxt == NEXTHDR_HOP || o_ipv6_hdr->ip6_nxt == NEXTHDR_DEST) {
+        uint32_t *payload = (uint32_t *)((uint8_t *)o_ipv6_hdr + 4); // Offset to EH payload(padding)
+        printf(",%d", *payload);
+      }
+      fprintf(ofile, "\n");
+    } else {
+      if (debug) {
+        print_icmp6_header((const u_char *)icmp6_hdr); // generic icmp6 header
+      }
     }
   }
   fflush(ofile);
@@ -214,11 +230,11 @@ int main (int argc, char * const argv[])
   struct bpf_program fp;           // The compiled filter expression
   pcap_t *pcap_handle ;            // packet capture handle
 
-  while (((ch = getopt(argc,argv, "fi:k:l:o:x"))) != -1) {
+  while (((ch = getopt(argc,argv, "di:k:l:o:x"))) != -1) {
     switch(ch) {
-      case 'f':
+      case 'd':
         // Stay in foreground. Default is to become daemon
-        is_daemon = 0;
+        is_daemon = 1;
         break;
       case 'i':
         // interface name of client side address
@@ -247,9 +263,20 @@ int main (int argc, char * const argv[])
 
   // Open output file if one was given
   if (ofilename != 0) {
-    ofile = fopen(ofilename, "a'");
+    ofile = fopen(ofilename, "a");
+    if (ofile == NULL) {
+      perror("can't open output/log file");
+      exit(1);
+    }
   } else {
     ofile = stdout;
+  }
+
+    // register the signal handler for SIGHUP
+  if (signal(SIGHUP, handle_sighup) == SIG_ERR) {
+    // handle error registering signal handler
+    perror("Error registering signal handler");
+    exit(1);
   }
 
   /* the PCAP capture filter  - ICMP(v6) traffic only*/
