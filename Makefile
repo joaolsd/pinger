@@ -53,6 +53,7 @@ distclean: clean
 install: all
 	$(INSTALL) listener /usr/local/bin
 	$(INSTALL) sender /usr/local/bin
+	mkdir -p /usr/local/lib/systemd/system
 	$(INSTALL) -m 644 etc.systemd.system.yarrp-sender.service /usr/local/lib/systemd/system/yarrp-sender.service
 	$(INSTALL) -m 644 etc.systemd.system.yarrp-listener.service /usr/local/lib/systemd/system/yarrp-listener.service
 	$(MKDIR) -p -m777  /tmp/pinger/
