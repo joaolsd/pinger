@@ -468,9 +468,20 @@ int main (int argc, char const *argv[])
   log_f = stdout; // default
   lineptr = calloc(LINEBUF_SIZE, 1);
   
-  while ((ch = getopt(argc, (char * const *)argv, "df:hil:tx")) != (char)-1) {
+  // Initialise default source addresses
+  source_v4_str = "172.104.147.241"; // testbed-de
+  source_v6_str = "2a01:7e01::f03c:91ff:fed5:395"; // testbed-de
+
+
+  while ((ch = getopt(argc, (char * const *)argv, "4:6:df:hil:tx")) != (char)-1) {
     // char *optarg;
     switch (ch) {
+      case '4':
+        source_v4_str = strdup(optarg);
+        break;
+      case '6':
+        source_v6_str = strdup(optarg);
+        break;
       case 'h':
         usage(progname);
         break;
@@ -503,12 +514,14 @@ int main (int argc, char const *argv[])
   // Non option argument
   // strncpy(lineptr, (char *)argv[optind], 128);
 
-  // Initialise source addresses
-  source_v4_str = "172.104.147.241"; // testbed-de
-  source_v6_str = "2a01:7e01::f03c:91ff:fed5:395"; // testbed-de
-
-  inet_pton(AF_INET, (char *)source_v4_str, source_v4);
-  inet_pton(AF_INET6, (char *)source_v6_str, source_v6);
+  if (inet_pton(AF_INET, (char *)source_v4_str, source_v4)  != 1) {
+    perror("Invalid IPv4 source address");
+    exit(1);
+  }
+  if (inet_pton(AF_INET6, (char *)source_v6_str, source_v6) != 1) {
+    perror("Invalid IPv6 source address");
+    exit(1);
+  }
   // memset(&hints, 0, sizeof(hints));
   // hints.ai_socktype = SOCK_RAW;
   // hints.ai_protocol = IPPROTO_RAW;
