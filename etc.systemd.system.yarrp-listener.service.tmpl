@@ -9,8 +9,8 @@ PartOf=nginx.service
 Type=forking
 #PIDFile=
 ExecStartPre=
-ExecStart=/usr/local/bin/listener -i ens3 -o /var/log/yarrp.log
-ExecReload=/usr/local/bin/listener -i ens3 -o /var/log/yarrp.log
+ExecStart=/usr/local/bin/listener -i @INT@ -k @V4@ -l @V6@ -o /var/log/yarrp.log
+ExecReload=/usr/local/bin/listener -i @INT@ -k @V4@ -l @V6@ -o /var/log/yarrp.log
 ExecStop=/usr/bin/pkill listener
 
 [Install]

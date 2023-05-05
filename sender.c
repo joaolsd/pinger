@@ -420,7 +420,8 @@ int setup_unix_socket(char *input_f) {
 /*****************************************/
 int main (int argc, char const *argv[])
 {
-  const char      *source_v4_str, *source_v6_str;
+  char *source_v4_str, *source_v6_str;
+  char *interface;
   struct tr_conf  *conf;  /* configuration defaults */
 
   struct addrinfo hints, *src_ip;
@@ -454,7 +455,6 @@ int main (int argc, char const *argv[])
   // conf->max_ttl = IPDEFTTL;
   conf->nprobes = 3;
   conf->if_name =  "eth0";
-  // conf->if_name =  "enp0s2";
 	conf->port = 443;
 	conf->ident = 666;
 	
@@ -471,9 +471,9 @@ int main (int argc, char const *argv[])
   // Initialise default source addresses
   source_v4_str = "172.104.147.241"; // testbed-de
   source_v6_str = "2a01:7e01::f03c:91ff:fed5:395"; // testbed-de
+  interface = "eth0"; // outgoing interface
 
-
-  while ((ch = getopt(argc, (char * const *)argv, "4:6:df:hil:tx")) != (char)-1) {
+  while ((ch = getopt(argc, (char * const *)argv, "4:6:df:hi:l:p:x")) != (char)-1) {
     // char *optarg;
     switch (ch) {
       case '4':
@@ -488,6 +488,9 @@ int main (int argc, char const *argv[])
       case 'd':
         is_daemon = 1;
         break;
+      case 'i':
+        conf->if_name = strdup(optarg);
+        break;
       case 'f': // name of input file or socket (if in daemon mode)
         input_f = optarg;
         file_input = 1;
@@ -495,13 +498,14 @@ int main (int argc, char const *argv[])
       // case '6':
       //   v6flag = 1;
       //   break;
-      case 'i':
-        conf->proto = IPPROTO_ICMP;
-        break;
       case 'l':
         log_file_name = optarg;
-      case 't':
-        conf->proto = IPPROTO_TCP;
+      case 'p':
+        if (strcmp(optarg, "t")) {
+          conf->proto = IPPROTO_TCP;
+        } else if (strcmp(optarg, "i") {
+          conf->proto = IPPROTO_ICMP;
+        }
         break;
       case 'x': // Debug flag
         debug = 1;
