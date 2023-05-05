@@ -503,8 +503,11 @@ int main (int argc, char const *argv[])
       case 'p':
         if (strcmp(optarg, "t")) {
           conf->proto = IPPROTO_TCP;
-        } else if (strcmp(optarg, "i") {
+        } else if (strcmp(optarg, "i")) {
           conf->proto = IPPROTO_ICMP;
+        } else {
+          perror("Unknown protocol with -p");
+          eit(1);
         }
         break;
       case 'x': // Debug flag
