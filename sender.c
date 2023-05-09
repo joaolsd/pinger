@@ -75,6 +75,10 @@ int debug = 0;
 int ret = 0;
 FILE *log_f;
 
+extern uint8_t src_mac[6];
+extern uint8_t dst_mac_v4[6];
+extern uint8_t dst_mac_v6[6];
+
 /*****************************************/
 void usage(char *progname) {
   printf("pinger [-f <endpoint>] [-d] [-h] [-6] [-t] [-i] [\"probe data\"]");
@@ -465,6 +469,10 @@ int main (int argc, char const *argv[])
   char *lineptr;
   int udp_socket;
 
+  int src_mac_set = 0;
+  int dst_mac_set_v4 = 0;
+  int dst_mac_set_v6 = 0;
+
   log_f = stdout; // default
   lineptr = calloc(LINEBUF_SIZE, 1);
   
@@ -473,7 +481,7 @@ int main (int argc, char const *argv[])
   source_v6_str = "2a01:7e01::f03c:91ff:fed5:395"; // testbed-de
   interface = "eth0"; // outgoing interface
 
-  while ((ch = getopt(argc, (char * const *)argv, "4:6:df:hi:l:p:x")) != (char)-1) {
+  while ((ch = getopt(argc, (char * const *)argv, "4:6:a:b:df:hi:l:p:x")) != (char)-1) {
     // char *optarg;
     switch (ch) {
       case '4':
@@ -481,6 +489,30 @@ int main (int argc, char const *argv[])
         break;
       case '6':
         source_v6_str = strdup(optarg);
+        break;
+      case 'a':
+        // mac address of our ethernet interface
+        if (sscanf(optarg, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", &src_mac[0], &src_mac[1], &src_mac[2], &src_mac[3], &src_mac[4], &src_mac[5]) != 6) {
+          fprintf(stderr,"%s not a MAC address\n",optarg) ;
+          exit(1) ;
+        }
+        src_mac_set = 1 ;
+        break;
+      case 'b':
+        // mac address of V4 gateway to the Internet
+        if (sscanf(optarg, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", &dst_mac_v4[0], &dst_mac_v4[1], &dst_mac_v4[2], &dst_mac_v4[3], &dst_mac_v4[4], &dst_mac_v4[5]) != 6) {
+          fprintf(stderr,"%s not a MAC address\n",optarg) ;
+          exit(1) ;
+        }
+        dst_mac_set_v4 = 1 ;
+        break;
+      case 'c':
+        // mac address of V6 gateway to the Internet
+        if (sscanf(optarg, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", &dst_mac_v6[0], &dst_mac_v6[1], &dst_mac_v6[2], &dst_mac_v6[3], &dst_mac_v6[4], &dst_mac_v6[5]) != 6) {
+          fprintf(stderr,"%s not a MAC address\n",optarg) ;
+          exit(1) ;
+        }
+        dst_mac_set_v6 = 1 ;
         break;
       case 'h':
         usage(progname);
@@ -507,7 +539,7 @@ int main (int argc, char const *argv[])
           conf->proto = IPPROTO_ICMP;
         } else {
           perror("Unknown protocol with -p");
-          eit(1);
+          exit(1);
         }
         break;
       case 'x': // Debug flag
@@ -520,6 +552,18 @@ int main (int argc, char const *argv[])
 
   // Non option argument
   // strncpy(lineptr, (char *)argv[optind], 128);
+
+  // Check if src mac is set and warn if not
+  if (!src_mac_set) {
+    perror("warning: source mac address not set");
+  }
+  // If we only set one dst mac addr, copy over to the other
+  if (dst_mac_set_v4 && !dst_mac_set_v6) {
+    memcpy(dst_mac_v6, dst_mac_v4, 6);
+  }
+  if (!dst_mac_set_v4 && dst_mac_set_v6) {
+    memcpy(dst_mac_v4, dst_mac_v6, 6);
+  }
 
   if (inet_pton(AF_INET, (char *)source_v4_str, source_v4)  != 1) {
     perror("Invalid IPv4 source address");

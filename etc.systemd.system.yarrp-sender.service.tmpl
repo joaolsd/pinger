@@ -9,8 +9,8 @@ PartOf=nginx.service
 Type=forking
 #PIDFile=
 ExecStartPre=
-ExecStart=/usr/local/bin/sender -d -i @INT@ -4 @V4@ -6 @V6@ -f /tmp/pinger/pinger_socket
-ExecReload=/usr/local/bin/sender -d -i @INT@ -4 @V4@ -6 @V6@ -f /tmp/pinger/pinger_socket
+ExecStart=/usr/local/bin/sender -d -i @INT@ -4 @V4@ -6 @V6@ -f @RCV_DATA@
+ExecReload=/usr/local/bin/sender -d -i @INT@ -4 @V4@ -6 @V6@ -f @RCV_DATA@
 ExecStop=/usr/bin/pkill sender
 
 [Install]

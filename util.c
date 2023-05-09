@@ -34,6 +34,16 @@
 
 u_int8_t icmp_type;
 
+// uint8_t src_mac[] = {0x6a, 0x89, 0x86, 0xa8, 0xdb, 0xf7}; // for the mac mini UTM VM
+// uint8_t dst_mac[] = {0x16, 0x98, 0x77, 0x25, 0xf5, 0x64}; //
+// uint8_t dst_mac[] = {0xd8, 0x58, 0xd7, 0x00, 0x37, 0x1d}; // at home
+// uint8_t src_mac[] = {0xf2, 0x3c, 0x91, 0xd5, 0x03, 0x95}; // for testbed-de
+// uint8_t dst_mac[] = {0x00, 0x00, 0x0c, 0x9f, 0xf0, 0x04}; // for testbed-de's gateway
+
+uint8_t src_mac[6] = {0x56,0x00,0x02,0xd7,0xc0,0xcc}; // rpki3 (eu)
+uint8_t dst_mac_v4[6] = {0xfe,0x00,0x02,0xd7,0xc0,0xcc}; // rpki3 (eu)
+uint8_t dst_mac_v6[6] = {0xfe,0x00,0x02,0xd7,0xc0,0xcc}; // rpki3 (eu)
+
 /***************************************************
  * Generic checksum
  * can be used for IP, UDP , TCP if the buffer is properly setup
@@ -222,22 +232,16 @@ udp_checksum_ipv4(const void *buff, size_t len, size_t length, in_addr_t *src_ad
 
 void ether_header(int IP_v, uint8_t *outpacket) {
   uint16_t ether_type;
-
-  // uint8_t src_mac[] = {0x6a, 0x89, 0x86, 0xa8, 0xdb, 0xf7}; // for the mac mini UTM VM
-  // uint8_t dst_mac[] = {0x16, 0x98, 0x77, 0x25, 0xf5, 0x64}; //
-  // uint8_t dst_mac[] = {0xd8, 0x58, 0xd7, 0x00, 0x37, 0x1d}; // at home
-  uint8_t src_mac[] = {0xf2, 0x3c, 0x91, 0xd5, 0x03, 0x95}; // for testbed-de
-  uint8_t dst_mac[] = {0x00, 0x00, 0x0c, 0x9f, 0xf0, 0x04}; // for testbed-de's gateway
-
   
-  memcpy(outpacket,     dst_mac, 6);
-  memcpy(outpacket + 6, src_mac, 6);
   if (IP_v == 4) {
     ether_type = htons(0x0800);
+    memcpy(outpacket, dst_mac_v4, 6);
   } else {
     ether_type = htons(0x86DD);
-  }
+    memcpy(outpacket, dst_mac_v6, 6);
+}
   memcpy(outpacket + 12, &ether_type, 2);
+  memcpy(outpacket + 6, src_mac, 6);
 }
 /***************************************************/
 /* Taken from the Linux kernel */
@@ -621,9 +625,12 @@ void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct
 	sadr_ll.sll_family = AF_PACKET;
 	sadr_ll.sll_ifindex = ifreq_i.ifr_ifindex; // index of interface
 	sadr_ll.sll_halen = ETH_ALEN; // length of destination mac address
-  uint8_t dst_mac[] = {0x00, 0x00, 0x0c, 0x9f, 0xf0, 0x04}; // for testbed-de's gateway
-  // uint8_t dst_mac[] = {0x16, 0x98, 0x77, 0x25, 0xf5, 0x64}; // mac mini @home
-	memcpy(sadr_ll.sll_addr, dst_mac, ETH_ALEN);
+
+  if (probe->addr_family == 4) {
+  	memcpy(sadr_ll.sll_addr, dst_mac_v4, ETH_ALEN);
+  } else if (probe->addr_family == 6) {
+    memcpy(sadr_ll.sll_addr, dst_mac_v6, ETH_ALEN);
+  }
   
   len = sendto(sndsock, outpacket, frame_len, 0, (const struct sockaddr*)&sadr_ll, sizeof(struct sockaddr_ll));
 	if (debug) printf("sent %d bytes on socket %d\n", len, sndsock);
