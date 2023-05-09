@@ -51,11 +51,19 @@ SEND_IN_IPV4 = "65.20.81.159"
 SEND_IN_IPV6 = "2401:c080:2400:1f43:5400:4ff:fe3f:afb9"
 SEND_IN_INTERFACE = "enp1s0"
 
+LISTEN_TARCUTTA_IPV4 = "203.133.248.122"
+LISTEN_TARCUTTA_IPV6 = "2401:2000:6660::122"
+LISTEN_TARCUTTA_INTERFACE = "eno1"
+RCV_DATA_TARCUTTA = "203.133.248.122:25002"
+SEND_TARCUTTA_IPV4 = "203.133.248.122"
+SEND_TARCUTTA_IPV6 = "2401:2000:6660::122"
+SEND_TARCUTTA_INTERFACE = "eno1"
+
 # simple logic to force make to be told what host to make for
 HOST=
 
 ifndef HOST
-$(error HOST must be set to one of {eu, am ap, in} eg by calling make HOST=<value> for Vultr hosts RPKI*)
+$(error HOST must be set to one of {eu, am ap, in, tarcutta} eg by calling make HOST=<value> for Vultr hosts RPKI*)
 endif
 
 # Pick the right IP Addresses
