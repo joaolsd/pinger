@@ -26,6 +26,10 @@ RCV_DATA_EU = "95.179.253.254:25002"
 SEND_EU_IPV4 = "95.179.253.254"
 SEND_EU_IPV6 = "2001:19f0:6c01:26e8:5400:2ff:fed7:c0cc"
 SEND_EU_INTERFACE = "ens3"
+MYMAC_EU = "56:00:02:d7:c0:cc"
+GW_MAC_EU_V4 = "fe:00:02:d7:c0:cc"
+GW_MAC_EU_V6 = "fe:00:02:d7:c0:cc"
+
 
 LISTEN_AM_IPV4 = "149.28.91.227"
 LISTEN_AM_IPV6 = "2001:19f0:6001:4c0c:5400:3ff:fe34:45ba"
@@ -58,6 +62,9 @@ RCV_DATA_TARCUTTA = "203.133.248.122:25002"
 SEND_TARCUTTA_IPV4 = "203.133.248.122"
 SEND_TARCUTTA_IPV6 = "2401:2000:6660::122"
 SEND_TARCUTTA_INTERFACE = "eno1"
+MYMAC_TARCUTTA = ""
+GW_MAC_TARCUTTA_V4 = ""
+GW_MAC_TARCUTTA_V6 = ""
 
 # simple logic to force make to be told what host to make for
 HOST=
@@ -74,6 +81,9 @@ RCV_DATA = RCV_DATA_$(HOST)
 SEND_IPV4 = SEND_$(HOST)_IPV4
 SEND_IPV6 = SEND_$(HOST)_IPV6
 SEND_IFACE = SEND_$(HOST)_INTERFACE
+MYMAC = MYMAC_$(HOST)
+GW_MAC_V4 = GW_MAC_$(HOST)_V4
+GW_MAC_V6 = GW_MAC_$(HOST)_V6
 
 $(info $$COMMON_SOURCES [$(COMMON_SOURCES)])
 $(info $$SENDER_SOURCES [$(SENDER_SOURCES)])
@@ -96,7 +106,9 @@ sender: $(SENDER_OBJECTS) $(COMMON_OBJECTS)
 
 systemd:
 	sed -e "s/@V4@/$(${LISTEN_IPV4})/" -e "s/@V6@/$($(LISTEN_IPV6))/" -e "s/@INT@/$($(LISTEN_IFACE))/" < etc.systemd.system.yarrp-listener.service.tmpl >etc.systemd.system.yarrp-listener.service
-	sed -e "s/@V4@/$(${SEND_IPV4})/" -e "s/@V6@/$($(SEND_IPV6))/" -e "s/@INT@/$($(SEND_IFACE))/" -e "s/@RCV_DATA@/$($(RCV_DATA))/" < etc.systemd.system.yarrp-sender.service.tmpl >etc.systemd.system.yarrp-sender.service
+	sed -e "s/@V4@/$(${SEND_IPV4})/" -e "s/@V6@/$($(SEND_IPV6))/" -e "s/@INT@/$($(SEND_IFACE))/" -e "s/@RCV_DATA@/$($(RCV_DATA))/" \
+			-e "s/@MYMAC@/$(${MYMAC})/"	-e "s/@GW_MAC_V4@/$(${GW_MAC_V4})/" 	-e "s/@GW_MAC_V6@/$(${GW_MAC_V6})/" \
+			< etc.systemd.system.yarrp-sender.service.tmpl >etc.systemd.system.yarrp-sender.service
 
 .PHONY: clean
 clean:
