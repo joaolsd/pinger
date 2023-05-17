@@ -224,6 +224,7 @@ void print_ipv6_header(const u_char *buffer)
     printf("IPv6 Header:\n");
     printf(" IP Version        : %d\n", version);
     // printf(" Traffic class   : %d\n", kkkkktc);
+    printf(" Flowlabel: %d 0x%05X\n", flow_label, flow_label);
     printf(" IP Payload Length   : %d  Bytes\n",ntohs(ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_plen));
     printf(" Next header.     : %d\n", (uint8_t)ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_nxt);
     printf(" Hop Limit        : %d\n", (uint8_t)ipv6_hdr->ip6_ctlun.ip6_un1.ip6_un1_hlim);

@@ -69,19 +69,22 @@ void handle_sighup(int sig) {
 /*****************************************/
 void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_char *packet) {
   struct ip6_hdr *ipv6_hdr;
-  struct ip6_hdr *o_ipv6_hdr;
+  struct ip6_hdr *emb_ipv6_hdr;
   struct iphdr *ipv4_hdr;
   struct icmphdr *icmp_hdr;
   struct iphdr *emb_ipv4_hdr;
   struct icmp6_hdr *icmp6_hdr;
   struct tcphdr *tcp_hdr;
   struct tcphdr *emb_tcp_hdr;
+  int eh_len;
   int ipv4 = 0;
   int ipv6 = 0;
-  struct in6_addr *target_addr;
   char icmp_src_addr_str[INET6_ADDRSTRLEN];
   char target_addr_str[INET6_ADDRSTRLEN];
   struct timeval now;
+  long sec_from_hour;
+  uint32_t timestamp;
+  struct timespec tp;
 
   size_t packet_len = (size_t)header->caplen;
 
@@ -138,20 +141,81 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
         fprintf(ofile, "F,");
       }
       // Print elapsed time
-      uint32_t timestamp = ntohl(emb_tcp_hdr->seq);
+      timestamp = ntohl(emb_tcp_hdr->seq);
 
       // Get seconds from top of the hour, including milliseconds
-      struct timespec tp;
       int ret = clock_gettime(CLOCK_REALTIME, &tp);
-      long sec_from_hour;
       if (ret == 0) {
-        sec_from_hour = tp.tv_sec %3600;
+        sec_from_hour = tp.tv_sec % 3600;
         if (sec_from_hour < timestamp/1000) { // we went across the top of the  hour
           sec_from_hour += 3600;
         }
         // timestamp is an integer with the rightmost 3 digits being the milliseconds (*1000)
         // printf("packet timestamp: %u, min from hour: %u, ms: %u\n", timestamp, sec_from_hour, tp.tv_nsec/1000000);
+        uint32_t elapsed_time = (sec_from_hour*1000 + tp.tv_nsec/1000000) - timestamp;
+        fprintf(ofile, "%f", elapsed_time/1000.0);
+      }
+      fprintf(ofile, "\n");
+    }
+  } else if (ipv6) {
+    // IPv6
+    uint32_t orig_ttl;
+    ipv6_hdr = (struct ip6_hdr *)(packet + 14);
+    icmp6_hdr = (struct icmp6_hdr *)((uint8_t *)ipv6_hdr + IP6_HDR_LEN);
+    emb_ipv6_hdr = (struct ip6_hdr *)((uint8_t *)icmp6_hdr + 8);
 
+    // Are there any extension headers?
+    eh_len = 0;
+    if (emb_ipv6_hdr->ip6_nxt == NEXTHDR_HOP || emb_ipv6_hdr->ip6_nxt == NEXTHDR_DEST) {
+      struct ip6_dest *hbh_hdr = (struct ip6_dest *)(emb_ipv6_hdr + IP6_HDR_LEN);
+      eh_len = (hbh_hdr->ip6d_len + 1) * 8;
+    }
+    emb_tcp_hdr = (struct tcphdr *) ((uint8_t *)emb_ipv6_hdr + IP6_HDR_LEN + eh_len);
+
+    if (debug) {
+      print_ipv6_header((const u_char *)ipv6_hdr);
+      print_icmp6_header((const u_char *)icmp6_hdr); // generic icmp6 header
+      print_ipv6_header((const u_char *)emb_ipv6_hdr); // embedded IPv6 header in returned packet
+      if (eh_len != 0) printf("EH of length %d\n", eh_len); 
+      print_tcp_header((const u_char *) emb_tcp_hdr); // embedded TCP header
+    }
+
+    if (icmp6_hdr->icmp6_type == ICMP6_TIME_EXCEEDED || icmp6_hdr->icmp6_type == ICMP6_DST_UNREACH) {
+      struct in6_addr *target_addr;
+      target_addr = &(emb_ipv6_hdr->ip6_dst);
+      inet_ntop(AF_INET6, target_addr, target_addr_str, INET6_ADDRSTRLEN);
+      fprintf(ofile, "%s,",target_addr_str);
+      inet_ntop(AF_INET6, &(ipv6_hdr->ip6_src), icmp_src_addr_str, INET6_ADDRSTRLEN);
+      fprintf(ofile, "%s,",icmp_src_addr_str);
+
+      // Original TTL, encoded in IP flow label field
+      orig_ttl = ntohl(emb_ipv6_hdr->ip6_flow) & 0xFF; // Flow label: rightmost 8 bits
+      fprintf(ofile, "%d,", orig_ttl);
+
+      // IPv6
+      // TODO Check crc of original IP address
+      
+      // Verify checksum for target IP address
+      uint16_t target_checksum;
+      target_checksum = crc16(0, (uint8_t const *)target_addr, 16);
+      if (target_checksum == emb_tcp_hdr->source) {
+        fprintf(ofile, "T,");
+      } else {
+        fprintf(ofile, "F,");
+      }
+
+      timestamp = ntohl(emb_tcp_hdr->seq);
+      // Get seconds from top of the hour, including milliseconds
+      struct timespec tp;
+      int ret = clock_gettime(CLOCK_REALTIME, &tp);
+      long sec_from_hour;
+      if (ret == 0) {
+        sec_from_hour = tp.tv_sec % 3600;
+        if (sec_from_hour < timestamp/1000) { // we went across the top of the  hour
+          sec_from_hour += 3600;
+        }
+        // timestamp is an integer with the rightmost 3 digits being the milliseconds (*1000)
+        // printf("packet timestamp: %u, min from hour: %u, ms: %u\n", timestamp, sec_from_hour, tp.tv_nsec/1000000);
         uint32_t elapsed_time = (sec_from_hour*1000 + tp.tv_nsec/1000000) - timestamp;
         fprintf(ofile, "%f", elapsed_time/1000.0);
       }
@@ -159,47 +223,6 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
     } else {
       if (debug) {
         print_icmp6_header((const u_char *)icmp_hdr);
-      }
-    }
-  } else if (ipv6) {
-    // IPv6
-    ipv6_hdr = (struct ip6_hdr *)(packet + 14);
-    icmp6_hdr = (struct icmp6_hdr *)((uint8_t *)ipv6_hdr + IP6_HDR_LEN);
-    o_ipv6_hdr = (struct ip6_hdr *)((uint8_t *)icmp6_hdr + 8);
-
-    target_addr = &(o_ipv6_hdr->ip6_dst);
-    inet_ntop(AF_INET6, target_addr, target_addr_str, INET6_ADDRSTRLEN);
-    inet_ntop(AF_INET6, &(ipv6_hdr->ip6_src), icmp_src_addr_str, INET6_ADDRSTRLEN);
-
-    if (debug) {
-      print_ipv6_header((const u_char *)ipv6_hdr);
-      print_icmp6_header((const u_char *)icmp6_hdr); // generic icmp6 header
-    }
-
-    if (icmp6_hdr->icmp6_type == ICMP6_TIME_EXCEEDED || icmp6_hdr->icmp6_type == ICMP6_DST_UNREACH) {
-      gettimeofday(&now, NULL);
-      fprintf(ofile, "%s,%s,%d,%lu,%lu",target_addr_str, icmp_src_addr_str, icmp6_hdr->icmp6_type, now.tv_sec, now.tv_usec);
-      
-      if (debug) {
-        printf(" ICMP Source IP : %s\n" , icmp_src_addr_str);
-        printf(" Target IP      : %s\n" , target_addr_str);
-        printf("Next header.    : %d\n", o_ipv6_hdr->ip6_nxt);
-      }
-      if (o_ipv6_hdr->ip6_nxt == IPPROTO_TCP) {
-        tcp_hdr=(struct tcphdr*)((uint8_t *)o_ipv6_hdr + IP6_HDR_LEN);
-        printf(",%d", tcp_hdr->source);
-        if (debug) {
-          printf(" Source Port      : %u\n",ntohs(tcp_hdr->source));
-          printf(" Destination Port : %u\n",ntohs(tcp_hdr->dest));
-        }
-      } else if (o_ipv6_hdr->ip6_nxt == NEXTHDR_HOP || o_ipv6_hdr->ip6_nxt == NEXTHDR_DEST) {
-        uint32_t *payload = (uint32_t *)((uint8_t *)o_ipv6_hdr + 4); // Offset to EH payload(padding)
-        printf(",%d", *payload);
-      }
-      fprintf(ofile, "\n");
-    } else {
-      if (debug) {
-        print_icmp6_header((const u_char *)icmp6_hdr); // generic icmp6 header
       }
     }
   }
@@ -241,12 +264,14 @@ int main (int argc, char * const argv[])
         interface = strdup(optarg) ;
         break;
       case 'k':
-        // interface IPv4 address of 'listen' address
+        // IPv4 address to listen for
         host_v4 = strdup(optarg) ;
+        version += 4;
         break ;
       case 'l':
-        // interface IPv6 address of 'listen' address
+        // IPv6 address to listen for
         host_v6 = strdup(optarg) ;
+        version += 6;
         break ;
       case 'o':
         // Output file (otherwise stdout)
@@ -280,7 +305,7 @@ int main (int argc, char * const argv[])
   }
 
   /* the PCAP capture filter  - ICMP(v6) traffic only*/
-  if (!version) {
+  if (version == 10) {
     sprintf(filter_exp,"dst host %s or dst host %s and (icmp or icmp6)", host_v6, host_v4);
     }
   else if (version == 4) {

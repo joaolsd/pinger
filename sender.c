@@ -81,15 +81,21 @@ extern uint8_t dst_mac_v6[6];
 
 /*****************************************/
 void usage(char *progname) {
-  printf("pinger [-f <endpoint>] [-d] [-h] [-6] [-t] [-i] [\"probe data\"]");
-  printf("-f: path to an input file, unix socket or IP_address:UDP_port\n");
+  printf("pinger options");
+  printf("  probe data comes from stdin or the -f argument]\n");
+  printf("  and has the format:\n");
+  printf("  addr_family,target addr,protocol,initial_ttl,final_ttl,options\n");
+  printf("-4: The source IPv4 address to use\n");
+  printf("-6: The source IPv6 address to use\n");
+  printf("-a: sender (my) MAC address\n");
+  printf("-b: gateway MAC address to use for v4 packets\n");
+  printf("-c: gateway MAC address to use for v6 packets\n");
   printf("-d: daemonise (must use a socket to send input)\n");
-  printf("-i: use ICMP\n");
-  printf("-t: use TCP\n");
+  printf("-f: path to an input file, unix socket or IP_address:UDP_port\n");
   printf("-h: this help\n");
+  printf("-i: ethernet interface to use for sending packets\n");
+  printf("-p: protocol to use (t:tcp, i:icmp). default is UDP\n");
   printf("-x: Turn on debugging\n");
-  printf("data:\n");
-  printf("  addr_family,target addr,protocol,options\n");
 	exit(0);
 }
 
@@ -108,13 +114,41 @@ void  daemonise() {
 }
 
 /*****************************************/
-int parse_options(char * options) {
-  return 1; // TODO, once we define what options we want to use
+void parse_options(char * options, struct probe* probe) {
+  char *option;
+  char *saveptr;
+  // Options are separated by ';'
+  option = strtok_r(options, ";", &saveptr);
+  while (option != NULL) {
+    if (debug) printf("probe options: %s\n", options);
+    switch (option[0]) { // first char after delimiter
+      case 'E': // IPv6 extension header
+        switch (option[1]) {
+          case 'H': // Hop by hop
+            probe->v6_options.type = NEXTHDR_HOP;
+            probe->v6_options.size = atoi(&option[2]);
+            if (debug) printf("  HBH EH\n");
+            break;
+          case 'D': // Destination
+            probe->v6_options.type = NEXTHDR_DEST;
+            probe->v6_options.size = atoi(&option[2]);
+            if (debug) printf("  DEST EH\n");
+            break;
+          default:
+            probe->v6_options.type = 0;
+            break;
+        }
+        break;
+      default:
+        probe->v6_options.type = NEXTHDR_NONE;
+        return;
+    }
+    option = strtok_r(NULL, ";", &saveptr);
+  };
 }
 
 /*****************************************/
-int parse_input_line(char *str, struct probe* probe)
-{
+int parse_input_line(char *str, struct probe* probe) {
   char *dst_addr, *options;
   struct addrinfo hints, *res, *src_ip;
   int error;
@@ -143,7 +177,7 @@ int parse_input_line(char *str, struct probe* probe)
   if (probe->final_ttl < 0 || probe->final_ttl > 255) return 0;
   if (probe->final_ttl < probe->initial_ttl) return 0;
   options = strtok(NULL,","); // extension header, if any
-  if (!parse_options(options)) return 0;
+  parse_options(options, probe);
 
   switch (probe->protocol) {
     case 'u':
@@ -206,8 +240,6 @@ int parse_input_line(char *str, struct probe* probe)
     }
   }
 
-  // Process options
-  strncpy((char *)&(probe->options), options, sizeof(probe->options));
   freeaddrinfo(res);
   return 1;
 }

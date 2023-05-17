@@ -189,6 +189,47 @@ tcp_checksum_ipv4(const void *buff, size_t len, size_t length, in_addr_t *src_ad
 }
 
 /***************************************************
+ * tcp checksum
+ * calculate the TCP checksum when over IPv6
+ **************************************************/
+uint16_t 
+tcp_checksum_ipv6(const void *buff, size_t len, size_t length, struct in6_addr *src_addr, struct in6_addr *dest_addr) {
+  const uint16_t *buf=buff;
+  uint16_t *ip_src=(void *)src_addr, *ip_dst=(void *)dest_addr;
+  uint32_t sum;
+  int i  ;
+ 
+  // Calculate the sum
+  sum = 0;
+  while (len > 1) {
+    sum += *buf++;
+    if (sum & 0x80000000)
+      sum = (sum & 0xFFFF) + (sum >> 16);
+    len -= 2;
+    }
+  if (len)  // Add the padding if the packet length is odd
+    sum += *((uint8_t *)buf);
+ 
+  // Add the pseudo-header
+  for (i = 0 ; i <= 7 ; ++i) 
+    sum += *(ip_src++);
+ 
+  for (i = 0 ; i <= 7 ; ++i) 
+    sum += *(ip_dst++);
+ 
+  sum += htons(IPPROTO_TCP);
+  sum += htons(length);
+ 
+  // Add the carries
+  while (sum >> 16)
+    sum = (sum & 0xFFFF) + (sum >> 16);
+ 
+  // Return the one's complement of sum
+  return((uint16_t)(~sum));
+}
+
+
+/***************************************************
  * udp checksum
  * calculate the UDP checksum when over IPv4
  **************************************************/
@@ -227,6 +268,47 @@ udp_checksum_ipv4(const void *buff, size_t len, size_t length, in_addr_t *src_ad
   // Return the one's complement of sum
   return((uint16_t)(~sum));
 }
+
+/***************************************************
+ * udp checksum
+ * calculate the UDP checksum when over IPv6
+ **************************************************/
+uint16_t 
+udp_checksum_ipv6(const void *buff, size_t len, size_t length, struct in6_addr *src_addr, struct in6_addr *dest_addr) {
+  const uint16_t *buf=buff;
+  uint16_t *ip_src=(void *)src_addr, *ip_dst=(void *)dest_addr;
+  uint32_t sum;
+  int i  ;
+ 
+  // Calculate the sum
+  sum = 0;
+  while (len > 1) {
+    sum += *buf++;
+    if (sum & 0x80000000)
+      sum = (sum & 0xFFFF) + (sum >> 16);
+    len -= 2;
+    }
+  if (len)  // Add the padding if the packet length is odd
+    sum += *((uint8_t *)buf);
+ 
+  // Add the pseudo-header
+  for (i = 0 ; i <= 7 ; ++i) 
+    sum += *(ip_src++);
+ 
+  for (i = 0 ; i <= 7 ; ++i) 
+    sum += *(ip_dst++);
+ 
+  sum += htons(IPPROTO_UDP);
+  sum += htons(length);
+ 
+  // Add the carries
+  while (sum >> 16)
+    sum = (sum & 0xFFFF) + (sum >> 16);
+ 
+  // Return the one's complement of sum
+  return((uint16_t)(~sum));
+}
+
 
 /***************************************************/
 
@@ -346,10 +428,10 @@ int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket
     long sec_from_hour;
     uint32_t timestamp;
     if (ret == 0) {
-      if (debug) {
-        printf("seconds: %ld\n", tp.tv_sec);
-        printf("nanoseconds: %ld\n", tp.tv_nsec);
-      }
+      // if (debug) {
+      //   printf("seconds: %ld\n", tp.tv_sec);
+      //   printf("nanoseconds: %ld\n", tp.tv_nsec);
+      // }
       sec_from_hour = tp.tv_sec %3600;
       // timestamp is an integer with the rightmost 3 digits being the milliseconds (*1000)
       timestamp = sec_from_hour*1000 + tp.tv_nsec/1000000;
@@ -421,138 +503,172 @@ int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket
 
 /***************************************************/
 int build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacket, struct probe *probe) {
+  struct timespec ts;
+  struct packetdata *op;
+  int i,status;
+  int datalen = 0;
+  uint16_t frame_len;
+  int padding;
+  int eh_len = 0;
+  int proto_len;
+  struct ip6_dest *hbh_hdr;
+  uint8_t *hbh_opt;
+  int eh;
 
-//   struct timespec ts;
-//   struct packetdata *op;
-//   int i,status;
-//   int datalen = 0;
-//   uint16_t frame_len;
-
-//   ether_header(6, outpacket);
+  ether_header(6, outpacket);
   
-//   struct ip6_hdr *ip6 = (struct ip6_hdr *)(outpacket + ETH_HDRLEN);
-//   // IPv6 version (4 bits), Traffic class (8 bits), Flow label (20 bits)
-//   ip6->ip6_flow = htonl((6 << 28) | (0 << 20) | 0);
-//   // Payload length (16 bits): ICMP header + ICMP data
-//   ip6->ip6_plen = htons(ICMP6_HDRLEN + datalen);
-//   // Hop limit (8 bits): default to maximum value
-//   ip6->ip6_hops = hops;
+  struct ip6_hdr *ip6 = (struct ip6_hdr *)(outpacket + ETH_HDRLEN);
+  // IPv6 version (4 bits), Traffic class (8 bits), Flow label (20 bits)
+  ip6->ip6_flow = htonl((6 << 28) | (0 << 20) | (uint8_t)hops);
+  // Hop limit (8 bits): default to maximum value
+  ip6->ip6_hops = hops;
 
-//  // // Source IPv6 address (128 bits)
-//  //  if ((status = inet_pton(AF_INET6, src_ip, &(ip6->ip6_src))) != 1) {
-//  //    fprintf (stderr, "inet_pton() failed for source address.\nError message: %s", strerror (status));
-//  //    exit (1);
-//  //  }
-//  //
-//  //  // Destination IPv6 address (128 bits)
-//  //  if ((status = inet_pton (AF_INET6, dst_ip, &(ip6->ip6_dst))) != 1) {
-//  //    fprintf (stderr, "inet_pton() failed for destination address.\nError message: %s", strerror (status));
-//  //    exit (1);
-//  //  }
+  memcpy(&(ip6->ip6_src), &(probe->src_addr), 16);
+  memcpy(&(ip6->ip6_dst), &(probe->dst_addr), 16);
 
-//   ip6->ip6_src = from->sin6_addr;
-//   ip6->ip6_dst = to->sin6_addr;
+  u_char *p = ((u_char *)ip6) + IP6_HDR_LEN;
+  if (eh = probe->v6_options.type) { // Add extension header, if requested
+    eh_len = 4;
+    switch (eh) {
+      case NEXTHDR_HOP:
+        ip6->ip6_nxt = NEXTHDR_HOP ; // hop by hop ext header
+        if (debug) printf("EH: HBH\n");
+        break;
+      case NEXTHDR_DEST:
+        ip6->ip6_nxt = NEXTHDR_DEST ; // destination ext header
+        if (debug) printf("EH: DST\n");
+        break;
+      default:
+        ip6->ip6_nxt = IPPROTO_TCP;
+        if (debug) printf("Default: Unknown or undefined EH\n");
+    }
+    // now set up the HBH or dest header
+    hbh_hdr = (struct ip6_dest *) p;
+    // select padding size
+    hbh_hdr->ip6d_len = (probe->v6_options.size / 8) - 1;  // Set option header length (does not include the first 8 bytes), in 8-byte units
+    hbh_opt = (uint8_t *)hbh_hdr + 2;
+    *hbh_opt = 0x01; // Option is one of the ones reserved for experiments
+    padding = probe->v6_options.size - 4;  // PADN data option length, in bytes
+    *(hbh_opt + 1) = padding; 
 
-//   // i = hops;
-//   // if (setsockopt(sndsock, IPPROTO_IPV6, IPV6_UNICAST_HOPS, (char *)&i, sizeof(i)) == -1) {
-//   //   warn("setsockopt IPV6_UNICAST_HOPS");
-//   // }
+    // write 0 into padding payload
+    int pad_count;
+    for (pad_count = 0; pad_count < padding; pad_count++) {
+      * (hbh_opt + 2 + pad_count) = 0;
+      eh_len ++;
+    }
+    switch (probe->protocol) {
+      case IPPROTO_ICMP:
+        // Next header (8 bits): 58 for ICMP
+        hbh_hdr->ip6d_nxt = IPPROTO_ICMPV6;
+        break;
+      case IPPROTO_UDP:
+        // Next header (8 bits)
+        hbh_hdr->ip6d_nxt = IPPROTO_UDP;
+        break;
+      case IPPROTO_TCP:
+        hbh_hdr->ip6d_nxt = IPPROTO_TCP;
+    }
+    p = p + eh_len;
+  } else {
+    if (debug) printf("No extension headers\n");
+    ip6->ip6_nxt = probe->protocol ; // UDP/TCP/ICMP header
+  }
 
-//   u_char *p = ((u_char *)ip6) + IP6_HDR_LEN;
-//   int eh = 0;
-//   if (eh) { // Add extension header
-//     if (header_type == 1) {
-//       ip6->ip6_nxt = 0 ; // destination ext header
-//     }
-//     else if (header_type == 2) {
-//       ip6->ip6_nxt = 60 ; // hop by hop ext header
-//     }
-//     // now set up the HBH or dest header
-//     hbh_hdr = (struct ip6_dest *) p;
-//     // select padding size
-//     hbh_hdr->ip6d_len = (padding / 8) - 1;  // Set option header length (does not include the first 8 bytes), in 8-byte units
-//     if (debug) printf("selected %d bytes of padding\n", pad_sizes[pad_rand]);
-//     hbh_opt = (uint8_t *)hbh_hdr + 2;
-//     *hbh_opt = 0x1E; // Option is one of the ones reserved for experiments
-//     padding = ext_header_size - 4;  // PADN data option length, in bytes
-//     *(hbh_opt + 1) = padding; 
+  struct udphdr *udphdr = (struct udphdr *) p;
+  struct tcphdr *tcphdr = (struct tcphdr *) p;
+  struct icmp6_hdr *icp = (struct icmp6_hdr *) p;  
 
-//     // write 0 into padding payload
-//     for (pad_count = 0; pad_count < padding; pad_count++) {
-//       * (hbh_opt + 2 + pad_count) = 0;
-//       }
-//     }
-//   else {
-//     e_iphdr->ip6_nxt = IPPROTO_TCP ; // TCP header
-//     }
+  switch (probe->protocol) {
+    case IPPROTO_ICMP:
+      frame_len = ETH_HDRLEN + IP6_HDR_LEN + eh_len +   ICMP6_HDRLEN + sizeof(struct packetdata);
+      // struct icmp6_hdr *icp = (struct icmp6_hdr *)(outpacket+ETH_HDRLEN+IP6_HDR_LEN);
+      icp->icmp6_type = htons(ICMP6_ECHO_REQUEST);
+      icp->icmp6_code = 0;
+      icp->icmp6_id = htons(conf->ident);
+      icp->icmp6_seq = htons(seq);
+      icp->icmp6_cksum = 0;
+      icp->icmp6_cksum = icmp6_checksum(ip6, icp, NULL, datalen);
+      op = (struct packetdata *)(outpacket + ETH_HDRLEN + IP6_HDR_LEN + ICMP6_HDRLEN);
+      proto_len = 8;
+      break;
+    case IPPROTO_UDP:
+      frame_len = ETH_HDRLEN + IP6_HDR_LEN + eh_len + UDP_HDR_LEN + sizeof(struct packetdata);
+      udphdr->uh_sport = htons(conf->ident);
+      udphdr->uh_dport = htons(conf->port+seq);
+      udphdr->uh_ulen = htons(frame_len - ETH_HDRLEN - sizeof(struct ip6_hdr));
+      udphdr->uh_sum = 0;
+      op = (struct packetdata *)(udphdr + 1);
+      proto_len = 8;
+      break;
+    case IPPROTO_TCP:
+      frame_len = ETH_HDRLEN + IP6_HDR_LEN + eh_len + TCP_HDR_LEN + sizeof(struct packetdata);
+      tcphdr->source = crc16(0, (uint8_t const *)&(ip6->ip6_dst), 16); // Source port is a checksum of the destination IP
+      tcphdr->dest = htons(conf->port);
+      tcphdr->check = 0;
+      // Get seconds from top of the hour, including milliseconds
+      struct timespec tp;
+      int ret = clock_gettime(CLOCK_REALTIME, &tp);
+      long sec_from_hour;
+      uint32_t timestamp;
+      if (ret == 0) {
+        // if (debug) {
+        //   printf("seconds: %ld\n", tp.tv_sec);
+        //   printf("nanoseconds: %ld\n", tp.tv_nsec);
+        // }
+        sec_from_hour = tp.tv_sec % 3600;
+        // timestamp is an integer with the rightmost 3 digits being the milliseconds (*1000)
+        timestamp = sec_from_hour*1000 + tp.tv_nsec/1000000;
+        if (debug) {
+          printf("timestamp: %d %d %d\n", sec_from_hour*1000, tp.tv_nsec/1000000, timestamp);
+        }
+      }
+      tcphdr->seq = htonl(timestamp);
+      tcphdr->ack_seq = 0;
+      tcphdr->doff=5;
+      tcphdr->fin=0;
+      tcphdr->syn=0;
+      tcphdr->rst=0;
+      tcphdr->psh=0;
+      tcphdr->ack=0;
+      tcphdr->urg=0;
+      tcphdr->window = 5;
+      tcphdr->check = 0;
+      tcphdr->urg_ptr = 0;
+      op = (struct packetdata *)(tcphdr + 1);
+      proto_len = 20;
+      break;    
+    default:
+      op = (struct packetdata *)(ip6 + 1);
+  }
 
-//   struct udphdr *udphdr = (struct udphdr *) p;
-//   struct tcphdr *udphdr = (struct tcphdr *) p;
-//   struct icmp6_hdr *icp = (struct icmp6_hdr *) p;
 
-//   uint8_t *nxt_hdr;
-//   if (eh) {
-//     nxt_hdr = (uint8_t *)hbh_hdr.ip6d_nxt;
-//   } else {
-//     nxt_hdr = (uint8_t *)ip6.ip6_nxt;
-//   }
-//   switch (conf->proto) {
-//     case IPPROTO_ICMP:
-//       break;
-//     case IPPROTO_UDP:
-//       break;
-//     case IPPROTO_TCP:
-//       ip6->ip6_nxt = IPPROTO_TCP;
+  op->sec = htonl(ts.tv_sec);
+  op->usec = htonl((ts.tv_nsec) % 1000000000);
+  op->seq = seq;
+  op->ttl = hops;
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1) {
+    err(1, "clock_gettime(CLOCK_MONOTONIC)");
+	}
 
-  
-//   hbh_hdr->ip6d_nxt = IPPROTO_TCP ;
-  
+  // Payload length (16 bits)
+  ip6->ip6_plen = htons(eh_len + proto_len + datalen);
 
-//   switch (conf->proto) {
-//     case IPPROTO_ICMP:
-//       // Next header (8 bits): 58 for ICMP
-//       *nxt_hdr = IPPROTO_ICMPV6;
-//       frame_len = ETH_HDRLEN + IP6_HDR_LEN + ICMP6_HDRLEN + sizeof(struct packetdata);
-//       // struct icmp6_hdr *icp = (struct icmp6_hdr *)(outpacket+ETH_HDRLEN+IP6_HDR_LEN);
-//       icp->icmp6_type = htons(ICMP6_ECHO_REQUEST);
-//       icp->icmp6_code = 0;
-//       icp->icmp6_id = htons(conf->ident);
-//       icp->icmp6_seq = htons(seq);
-//       icp->icmp6_cksum = 0;
-//       icp->icmp6_cksum = icmp6_checksum(ip6, icp, NULL, datalen);
-//       op = (struct packetdata *)(outpacket + ETH_HDRLEN + IP6_HDR_LEN + ICMP6_HDRLEN);
-//       break;
-//     case IPPROTO_UDP:
-//       // Next header (8 bits)
-//       *nxt_hdr = IPPROTO_UDP;
-//       frame_len = ETH_HDRLEN + IP6_HDR_LEN + UDP_HDR_LEN + sizeof(struct packetdata);
-//       udphdr->uh_sport = htons(conf->ident);
-//       udphdr->uh_dport = htons(conf->port+seq);
-//       udphdr->uh_ulen = htons(frame_len - ETH_HDRLEN - sizeof(struct ip6_hdr));
-//       udphdr->uh_sum = 0;
-//       op = (struct packetdata *)(udphdr + 1);
-//       break;
-//     case IPPROTO_TCP:
-//       // Next header (8 bits)
-//       *nxt_hdr = IPPROTO_TCP;
-//       frame_len = ETH_HDRLEN + IP6_HDR_LEN + UDP_HDR_LEN + sizeof(struct packetdata);
-//       udphdr->uh_sport = htons(conf->ident);
-//       udphdr->uh_dport = htons(conf->port+seq);
-//       udphdr->uh_ulen = htons(frame_len - ETH_HDRLEN - sizeof(struct ip6_hdr));
-//       udphdr->uh_sum = 0;
-//       op = (struct packetdata *)(udphdr + 1);
-//     default:
-//     op = (struct packetdata *)(ip6 + 1);
-//   }
-//   op->sec = htonl(ts.tv_sec);
-//   op->usec = htonl((ts.tv_nsec) % 1000000000);
-//   op->seq = seq;
-//   op->ttl = hops;
-//   ((struct sockaddr_in6 *)to)->sin6_port = htons(conf->port + seq);
-// 	if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1) {
-//     err(1, "clock_gettime(CLOCK_MONOTONIC)");
-// 	}
-// return frame_len;
+  // TODO
+  // if (probe->protocol == IPPROTO_ICMP && icmp_type == ICMP_ECHO) {
+  //   icmp_pkt->icmp_cksum = 0;
+  //   icmp_pkt->icmp_cksum = checksum((u_short *)icmp_pkt, frame_len - sizeof(struct ip6_hdr));
+  //   if (icmp_pkt->icmp_cksum == 0) {
+  //     icmp_pkt->icmp_cksum = 0xffff;
+  //   }
+  // }
+	if (probe->protocol == IPPROTO_UDP) {
+		udphdr->uh_sum = udp_checksum_ipv6((uint16_t *)udphdr, UDP_HDR_LEN + sizeof(struct packetdata), UDP_HDR_LEN + sizeof(struct packetdata), &ip6->ip6_src, &ip6->ip6_dst);
+	}
+  if (probe->protocol == IPPROTO_TCP) {
+    tcphdr->check =  tcp_checksum_ipv6(tcphdr, TCP_HDR_LEN + sizeof(struct packetdata), TCP_HDR_LEN + sizeof(struct packetdata), &ip6->ip6_src, &ip6->ip6_dst);
+  }
+  return frame_len;
 }
 
 /***************************************************/
@@ -561,6 +677,9 @@ void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct
   uint8_t outpacket[1514];
   icmp_type = ICMP_ECHO; /* default ICMP code/type */
   uint16_t frame_len;
+  struct ip6_hdr *ip6;
+  const u_char * p;
+  int nxt_header;
 
   switch (probe->addr_family) {
   case 4:
@@ -583,13 +702,33 @@ void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct
     print_ethernet_header((const u_char *)outpacket);
     if (probe->addr_family == 6) {
       print_ipv6_header((const u_char *)outpacket+ETH_HDRLEN);
-      if (probe->protocol == IPPROTO_ICMP) {
-        print_icmp6_header((const u_char *)outpacket+ETH_HDRLEN+IP6_HDR_LEN);
-      } else if (probe->protocol == IPPROTO_UDP) {
-        print_udp_header((const u_char *)outpacket+ETH_HDRLEN+IP6_HDR_LEN);
-      } else if (probe->protocol == IPPROTO_TCP) {
-        print_tcp_header((const u_char *)outpacket+ETH_HDRLEN+IP6_HDR_LEN);
-      }
+      ip6 = (struct ip6_hdr *)(outpacket + ETH_HDRLEN);
+      nxt_header = ip6->ip6_nxt;
+      p = (const u_char *)ip6 + IP6_HDR_LEN;
+      do {
+        switch (nxt_header) {
+          case IPPROTO_TCP:
+            print_tcp_header(p);
+            nxt_header = 0;
+            break;
+          case IPPROTO_UDP:
+            print_udp_header(p);
+            nxt_header = 0;
+            break;
+          case IPPROTO_ICMPV6:
+            print_icmp6_header(p);
+            nxt_header = 0;
+            break;
+          case 0: // Hop-by-hop EH
+          case 60: // Destination EH
+            printf("################\n");
+            printf("Extension header\n");
+            printf("################\n");
+            nxt_header = (uint8_t) *p;
+            p += ((uint8_t) *(p+1) + 1)* 8;
+            break;
+        }
+      } while (nxt_header);
     } else {
       print_ipv4_header((const u_char *)outpacket+ETH_HDRLEN);
       if (probe->protocol == IPPROTO_ICMP) {
