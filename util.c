@@ -527,8 +527,8 @@ int build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacke
   memcpy(&(ip6->ip6_dst), &(probe->dst_addr), 16);
 
   u_char *p = ((u_char *)ip6) + IP6_HDR_LEN;
-  if (eh = probe->v6_options.type) { // Add extension header, if requested
-    eh_len = 4;
+  eh = probe->v6_options.type;
+  if (eh != NEXTHDR_NONE) { // Add extension header, if requested
     switch (eh) {
       case NEXTHDR_HOP:
         ip6->ip6_nxt = NEXTHDR_HOP ; // hop by hop ext header
@@ -542,6 +542,7 @@ int build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacke
         ip6->ip6_nxt = IPPROTO_TCP;
         if (debug) printf("Default: Unknown or undefined EH\n");
     }
+    eh_len = 4;
     // now set up the HBH or dest header
     hbh_hdr = (struct ip6_dest *) p;
     // select padding size
