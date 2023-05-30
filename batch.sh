@@ -4,7 +4,7 @@
 PID=$!
 ./sender -f ./yarrp-noeh.csv -4 203.133.248.122 -6 2401:2000:6660::122 -i eno1 -a 14:18:77:43:b9:b8 -b 00:00:0c:9f:f4:59 -c 00:05:73:a0:08:41
 kill $PID
-HOSTNAME=/bin/hostname
+HOSTNAME=$(/bin/hostname)
 
 for size in 8 16 32 64 128
 do
