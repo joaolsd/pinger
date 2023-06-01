@@ -6,7 +6,7 @@ source batch-$HOSTNAME-cfg.sh
 
 ./listener  -i $INT -k $MY_IPV4 -l $MY_IPV6  -o yarrp-$HOSTNAME-noeh.log &
 LISTEN_PID=$!
-tcpdump -nvvvv -w pkts-$HOSTNAME-hbh$size.pcap -i eno1  'dst port 443 or  icmp6[0]==3' &
+tcpdump -nvvvv -w pkts-$HOSTNAME-hbh$size.pcap -i $INT  'dst port 443 or  icmp6[0]==3' &
 TCPDUMP_PID=$!
 ./sender -f ./yarrp-noeh.csv -i $INT -4 $MY_IPV4 -6 $MY_IPV6 -a $MY_MAC -b $DFGW_V4_MAC -c $DFGW_V6_MAC
 kill $LISTEN_PID
@@ -17,7 +17,7 @@ do
   sleep 2
   ./listener  -i $INT -k $MY_IPV4 -l $MY_IPV6  -o yarrp-$HOSTNAME-hbh$size.log &
   LISTEN_PID=$!
-  tcpdump -nvvvv -w pkts-$HOSTNAME-hbh$size.pcap -i eno1  'dst port 443 or  icmp6[0]==3' &
+  tcpdump -nvvvv -w pkts-$HOSTNAME-hbh$size.pcap -i $INT  'dst port 443 or  icmp6[0]==3' &
   TCPDUMP_PID=$!
   ./sender -f ./yarrp-hbh$size.csv -i $INT -4 $MY_IPV4 -6 $MY_IPV6 -a $MY_MAC -b $DFGW_V4_MAC -c $DFGW_V6_MAC
   kill $LISTEN_PID
@@ -29,7 +29,7 @@ do
   sleep 2
   ./listener  -i $INT -k $MY_IPV4 -l $MY_IPV6 -o yarrp-$HOSTNAME-dst$size.log &
   LISTEN_PID=$!
-  tcpdump -nvvvv -w pkts-$HOSTNAME-hbh$size.pcap -i eno1  'dst port 443 or  icmp6[0]==3' &
+  tcpdump -nvvvv -w pkts-$HOSTNAME-hbh$size.pcap -i $INT  'dst port 443 or  icmp6[0]==3' &
   TCPDUMP_PID=$!
   ./sender -f ./yarrp-dst$size.csv -i $INT -4 $MY_IPV4 -6 $MY_IPV6 -a $MY_MAC -b $DFGW_V4_MAC -c $DFGW_V6_MAC
   kill $LISTEN_PID
