@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
 
-MY_IPV4=203.133.248.122
-MY_IPV6=2401:2000:6660::122
-MY_MAC=14:18:77:43:b9:b8
-DFGW_V4_MAC=00:00:0c:9f:f4:59
-DFGW_V6_MAC=00:05:73:a0:08:41
-INT=eno1
+HOSTNAME=$(/bin/hostname -s)
 
-HOSTNAME=$(/bin/hostname)
+source batch-$HOSTNAME-cfg.sh
+
 ./listener  -i $INT -k $MY_IPV4 -l $MY_IPV6  -o yarrp-$HOSTNAME-noeh.log &
 LISTEN_PID=$!
 tcpdump -nvvvv -w pkts-$HOSTNAME-hbh$size.pcap -i eno1  'dst port 443 or  icmp6[0]==3' &
