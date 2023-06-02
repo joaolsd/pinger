@@ -194,6 +194,22 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
 
       // IPv6
       // TODO Check crc of original IP address
+
+      // Type of received ICMP
+      if (icmp6_hdr->icmp6_type == ICMP6_TIME_EXCEEDED) {
+        fprintf(ofile,"HL,");
+      } else if (icmp6_hdr->icmp6_type == ICMP6_DST_UNREACH) {
+        switch (icmp6_hdr->icmp6_code) {
+          case ICMP6_DST_UNREACH_ADDR:
+            fprintf(ofile,"UN,");
+            break;
+          case ICMP6_DST_UNREACH_NOPORT:
+            fprintf(ofile,"UP,");
+            break;
+          default:
+            fprintf(ofile,"U%d,",icmp6_hdr->icmp6_code);
+        }
+      }
       
       // Verify checksum for target IP address
       uint16_t target_checksum;
