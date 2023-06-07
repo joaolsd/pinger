@@ -27,6 +27,7 @@
 #include "sender.h"
 #include "util.h"
 #include <libgen.h>
+#include <time.h>
 
 #include <net/if.h>
 #include <sys/ioctl.h>
@@ -74,6 +75,17 @@ int is_daemon = 0;
 int debug = 0;
 int ret = 0;
 FILE *log_f;
+
+#define MAX_INPUT_LINES 50000
+#define MAX_TTL_VALUES 32
+
+struct probe prefixes[MAX_INPUT_LINES];
+struct probes {
+  int ttl;
+  struct probe * prefix;
+} probes[MAX_INPUT_LINES * MAX_TTL_VALUES];
+
+
 
 extern uint8_t src_mac[6];
 extern uint8_t dst_mac_v4[6];
@@ -475,6 +487,7 @@ int main (int argc, char const *argv[])
 
   struct in_addr  *source_v4;
   struct in6_addr *source_v6;
+  char addr_str[256];
 
   source_v4 = malloc(sizeof(struct in_addr));
   source_v6 = malloc(sizeof(struct in6_addr));
@@ -652,79 +665,173 @@ int main (int argc, char const *argv[])
   send_socket_v4 = open_v4_socket();
   send_socket_v6 = open_v6_socket();
 
-  do {
-    if (file_input) {
-      if (is_daemon) {
-        if (udp_socket == 0) {
-          while (new_fd <=0) {
-            new_fd = accept(socket_fd, NULL, NULL);
-            if (new_fd == -1) {
-              if (errno == EAGAIN) {
-                continue;
-              } else {
-                perror("Error accepting socket");
-                exit(-2);
+  int seq = 0;
+  if (file_input & !is_daemon) { // when reading from a file, read the entire file and shuffle elements to avoid rate limiting
+    size_t n = LINEBUF_SIZE;
+    int t;
+    int n_lines = 0;
+    int cursor1 = 0;
+    int cursor2 = 0;
+    int ttl;
+    srand(time(0));
+
+    while(1) {
+      ret = getline(&lineptr, &n, file);
+      if (ret == -1) break;
+
+      // 4,192.168.1.1,u,options
+      // 1st field: 4 or 6, for IPv4/IPv6
+      // 2nd field: IPv(4|6) address
+      // 3rd field: protocol (u:udp, t:tcp, i:icmp)
+      // 4th field: initial TTL/hop count
+      // 5th field: final TTL/hop count
+      // 6th field: options (e.g. extension header for IPv6)
+      if (!parse_input_line(lineptr,&probe)) {
+        continue;
+      }
+      memcpy(&prefixes[n_lines], &probe, sizeof(struct probe)); // store input data in vector of prefixes
+      cursor2 = cursor1 + (probe.final_ttl - probe.initial_ttl);
+      ttl = probe.initial_ttl;
+      for (t = cursor1; t < cursor2; t++) {
+        printf("cursor1: %d, cursor2:%d, t:%d\n", cursor1, cursor2, t);
+        probes[t].ttl = ttl;  // vector storing prefix and TTL
+        probes[t].prefix = &prefixes[n_lines];
+        ttl++;
+      }
+      n_lines++;
+      if (n_lines > MAX_INPUT_LINES) {
+        fprintf(stderr, "File too long: Maxmimum line count reached, exiting\n");
+        exit(1);
+      }
+      cursor1 = cursor2;
+    };
+  
+    // for (int i = 0; i < n_lines; i++) {
+    //   printf("i: %d,",i);
+    //   printf("Addr family: %d, ", prefixes[i].addr_family);
+    //   printf("dest addr: %s", inet_ntop(AF_INET6, &(prefixes[i].dst_addr), addr_str, 256));
+    //   printf("Protocol: %d", prefixes[i].protocol);
+    //   printf("TTLs: %d, %d, %d\n", ttl, prefixes[i].initial_ttl, prefixes[i].initial_ttl);
+    //   // printf("Options type %d and size %d\n", prefixes[i].v6_options.type, prefixes[i].v6_options.size);
+    // }
+    // shuffle list of probes
+    struct probe temp;
+    for (int i = cursor2 - 1; i > 0; i--) {
+        int j = rand() % (i + 1);
+        memcpy(&temp, &probes[i], sizeof(struct probes));
+        memcpy(&probes[i],&probes[j], sizeof(struct probes));
+        memcpy(&probes[j], &temp, sizeof(struct probes));
+    }
+
+    // for (int i = cursor2 - 1; i >= 0; i--) {
+    //   printf("i: %d, ",i);
+    //   printf("Addr family: %d, ", probes[i].prefix->addr_family);
+    //   printf("dest addr: %s\n", inet_ntop(AF_INET6, &(probes[i].prefix->dst_addr), addr_str, 256));
+    //   printf("Protocol: %d\n", probes[i].prefix->protocol);
+    //   printf("TTLs: %d, %d, %d\n", probes[i].ttl, probes[i].prefix->initial_ttl, probes[i].prefix->final_ttl);
+    //   // printf("Options: %s\n", probes[i].prefix->v6_options);
+    // }
+
+    // Loop over data from file
+    for (int i = 0; i < cursor2; i++) {
+      ttl = probes[i].ttl;
+      memcpy(&probe, probes[i].prefix, sizeof(struct probe));
+      // printf("Addr family: %d\n", probes[i].prefix->addr_family);
+      // printf("Options: %s\n", probes[i].prefix->v6_options);
+      // printf("Protocol: %d\n", probes[i].prefix->protocol);
+      // printf("TTLs: %d, %d, %d\n", ttl, probes[i].prefix->initial_ttl, probes[i].prefix->initial_ttl);
+      if (probe.addr_family == 6) {
+        memcpy((void *)&(probe.src_addr), (void *)source_v6, sizeof(struct in6_addr));
+        if (debug) {
+          fprintf(log_f, "Sending probe to %s\n", inet_ntop(AF_INET6, &(probe.dst_addr), addr_str, 256));
+        }
+        sndsock = send_socket_v6;
+      } else {
+        memcpy((void *)&(probe.src_addr), (void *)source_v4, sizeof(struct in_addr));
+        if (debug) {
+          printf("Sending probe to %s\n", inet_ntop(AF_INET, &(probe.dst_addr), addr_str, 256));
+        }
+        sndsock = send_socket_v4;
+      }
+
+        send_probe(conf, sndsock, seq, ttl, &probe, log_f);
+    }
+  } else { // reading from socket or stdin
+    do {
+      if (file_input) {
+        if (is_daemon) {
+          if (udp_socket == 0) {
+            while (new_fd <=0) {
+              new_fd = accept(socket_fd, NULL, NULL);
+              if (new_fd == -1) {
+                if (errno == EAGAIN) {
+                  continue;
+                } else {
+                  perror("Error accepting socket");
+                  exit(-2);
+                }
               }
             }
+          } else {
+            new_fd = socket_fd;
           }
-        } else {
-          new_fd = socket_fd;
-        }
-        if (read(new_fd, lineptr, LINEBUF_SIZE) == -1) {
-          if (errno == EAGAIN) {
-            continue;
+          if (read(new_fd, lineptr, LINEBUF_SIZE) == -1) {
+            if (errno == EAGAIN) {
+              continue;
+            }
+            perror("Error reading from socket");
           }
-          perror("Error reading from socket");
+          if (debug) fprintf(log_f, "read new data: %s\n", lineptr);
         }
-        if (debug) fprintf(log_f, "read new data: %s\n", lineptr);
+      } else { //read from stdin
+          size_t n = LINEBUF_SIZE;
+          ret = getline(&lineptr, &n, file);
+          if (ret == -1) exit(0);
+      }
+      new_fd = 0;
+      // 4,192.168.1.1,u,options
+      // 1st field: 4 or 6, for IPv4/IPv6
+      // 2nd field: IPv(4|6) address
+      // 3rd field: protocol (u:udp, t:tcp, i:icmp)
+      // 4th field: initial TTL/hop count
+      // 5th field: final TTL/hop count
+      // 6th field: options (e.g. extension header for IPv6)
+      if (!parse_input_line(lineptr,&probe)) {
+        continue;
+      }
+
+      int i_ttl, f_ttl, ttl;
+      if (probe.initial_ttl != 0) {
+        i_ttl = probe.initial_ttl;
       } else {
-        size_t n = LINEBUF_SIZE;
-        ret = getline(&lineptr, &n, file);
-        if (ret == -1) exit(0);
+        i_ttl = conf->first_ttl;
       }
-    } else {
-        size_t n = LINEBUF_SIZE;
-        ret = getline(&lineptr, &n, file);
-        if (ret == -1) exit(0);
-    }
-    new_fd = 0;
-    if (!parse_input_line(lineptr,&probe)) {
-      continue;
-    }
-
-    int seq = 0;
-    int i_ttl, f_ttl, ttl;
-    if (probe.initial_ttl != 0) {
-      i_ttl = probe.initial_ttl;
-    } else {
-      i_ttl = conf->first_ttl;
-    }
-    if (probe.final_ttl != 0) {
-      f_ttl = probe.final_ttl;
-    } else {
-      f_ttl = conf->max_ttl;
-    }
-
-    char addr_str[256];
-    if (probe.addr_family == 6) {
-      memcpy((void *)&(probe.src_addr), (void *)source_v6, sizeof(struct in6_addr));
-      if (debug) {
-        fprintf(log_f, "Sending probe to %s\n", inet_ntop(AF_INET6, &(probe.dst_addr), addr_str, 256));
+      if (probe.final_ttl != 0) {
+        f_ttl = probe.final_ttl;
+      } else {
+        f_ttl = conf->max_ttl;
       }
-      sndsock = send_socket_v6;
-    } else {
-      memcpy((void *)&(probe.src_addr), (void *)source_v4, sizeof(struct in_addr));
-      if (debug) {
-        printf("Sending probe to %s\n", inet_ntop(AF_INET, &(probe.dst_addr), addr_str, 256));
+
+      char addr_str[256];
+      if (probe.addr_family == 6) {
+        memcpy((void *)&(probe.src_addr), (void *)source_v6, sizeof(struct in6_addr));
+        if (debug) {
+          fprintf(log_f, "Sending probe to %s\n", inet_ntop(AF_INET6, &(probe.dst_addr), addr_str, 256));
+        }
+        sndsock = send_socket_v6;
+      } else {
+        memcpy((void *)&(probe.src_addr), (void *)source_v4, sizeof(struct in_addr));
+        if (debug) {
+          printf("Sending probe to %s\n", inet_ntop(AF_INET, &(probe.dst_addr), addr_str, 256));
+        }
+        sndsock = send_socket_v4;
       }
-      sndsock = send_socket_v4;
-    }
 
-    for (ttl = i_ttl; ttl <= f_ttl; ttl++) {
-      send_probe(conf, sndsock, seq, ttl, &probe, log_f);
-    }
+      for (ttl = i_ttl; ttl <= f_ttl; ttl++) {
+        send_probe(conf, sndsock, seq, ttl, &probe, log_f);
+      }
 
-  } while(file_input);
-  
+    } while(file_input);
+  }
   return 0;
 }
