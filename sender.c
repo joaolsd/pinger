@@ -693,7 +693,7 @@ int main (int argc, char const *argv[])
       cursor2 = cursor1 + (probe.final_ttl - probe.initial_ttl);
       ttl = probe.initial_ttl;
       for (t = cursor1; t < cursor2; t++) {
-        printf("cursor1: %d, cursor2:%d, t:%d\n", cursor1, cursor2, t);
+        // printf("cursor1: %d, cursor2:%d, t:%d\n", cursor1, cursor2, t);
         probes[t].ttl = ttl;  // vector storing prefix and TTL
         probes[t].prefix = &prefixes[n_lines];
         ttl++;
