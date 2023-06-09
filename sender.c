@@ -737,7 +737,7 @@ int main (int argc, char const *argv[])
       ttl = probes[i].ttl;
       memcpy(&probe, probes[i].prefix, sizeof(struct probe));
       // printf("Addr family: %d\n", probes[i].prefix->addr_family);
-      // printf("Options: %s\n", probes[i].prefix->v6_options);
+      // printf("Options: type %d size %d\n", probes[i].prefix->v6_options.type, probes[i].prefix->v6_options.size);
       // printf("Protocol: %d\n", probes[i].prefix->protocol);
       // printf("TTLs: %d, %d, %d\n", ttl, probes[i].prefix->initial_ttl, probes[i].prefix->initial_ttl);
       if (probe.addr_family == 6) {
