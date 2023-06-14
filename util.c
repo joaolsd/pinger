@@ -436,7 +436,7 @@ int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket
       // timestamp is an integer with the rightmost 3 digits being the milliseconds (*1000)
       timestamp = sec_from_hour*1000 + tp.tv_nsec/1000000;
       if (debug) {
-        printf("timestamp: %d %d %d\n", sec_from_hour*1000, tp.tv_nsec/1000000, timestamp);
+        printf("timestamp: %ld %ld %d\n", sec_from_hour*1000, tp.tv_nsec/1000000, timestamp);
       }
     }
     tcphdr->seq = htonl(timestamp);
@@ -622,7 +622,7 @@ int build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacke
         // timestamp is an integer with the rightmost 3 digits being the milliseconds (*1000)
         timestamp = sec_from_hour*1000 + tp.tv_nsec/1000000;
         if (debug) {
-          printf("timestamp: %d %d %d\n", sec_from_hour*1000, tp.tv_nsec/1000000, timestamp);
+          printf("timestamp: %ld %ld %d\n", sec_from_hour*1000, tp.tv_nsec/1000000, timestamp);
         }
       }
       tcphdr->seq = htonl(timestamp);
@@ -637,8 +637,24 @@ int build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacke
       tcphdr->window = 5;
       tcphdr->check = 0;
       tcphdr->urg_ptr = 0;
-      // op = (struct packetdata *)(tcphdr + 1);
       proto_len = 20;
+      tcphdr->doff=8;
+      proto_len += 12;
+      char *tcp_opts;
+      tcp_opts = (char *) (tcphdr + 1); ;
+      tcp_opts[0] = 0x02 ;  // kind = 2 = mss
+      tcp_opts[1] = 0x04 ;  // length = 4
+      tcp_opts[2] = 0x05 ;  // mss val = 0x50 = 1280
+      tcp_opts[3] = 0xa0 ;
+      tcp_opts[4] = 0x01 ;  // kind = 1 = fill
+      tcp_opts[5] = 0x01 ;  // kind = 1 = fill
+      tcp_opts[6] = 0x04 ;  // kind = 4 = SACK permitted
+      tcp_opts[7] = 0x02 ;  // length = 2
+      tcp_opts[8] = 0x01 ;  // kind = 1 = fill
+      tcp_opts[9] = 0x03 ;  // kind = 3 = window scaling
+      tcp_opts[10] = 0x03 ; // length = 3
+      tcp_opts[11] = 0x02 ; // scale val = 2
+      // op = (struct packetdata *)(&(tcp_opts[12]));
       break;    
     default:
       op = (struct packetdata *)(ip6 + 1);
