@@ -514,6 +514,9 @@ int build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacke
   struct ip6_dest *hbh_hdr;
   uint8_t *hbh_opt;
   int eh;
+  int tcp_opt_len;
+  char *tcp_opts;
+
 
   ether_header(6, outpacket);
   
@@ -604,7 +607,6 @@ int build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacke
       break;
     case IPPROTO_TCP:
       // frame_len = ETH_HDRLEN + IP6_HDR_LEN + eh_len + TCP_HDR_LEN + sizeof(struct packetdata);
-      frame_len = ETH_HDRLEN + IP6_HDR_LEN + eh_len + TCP_HDR_LEN;
       tcphdr->source = crc16(0, (uint8_t const *)&(ip6->ip6_dst), 16); // Source port is a checksum of the destination IP
       tcphdr->dest = htons(conf->port);
       tcphdr->check = 0;
@@ -640,7 +642,6 @@ int build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacke
       proto_len = 20;
       tcphdr->doff=8;
       proto_len += 12;
-      char *tcp_opts;
       tcp_opts = (char *) (tcphdr + 1); ;
       tcp_opts[0] = 0x02 ;  // kind = 2 = mss
       tcp_opts[1] = 0x04 ;  // length = 4
@@ -654,6 +655,9 @@ int build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacke
       tcp_opts[9] = 0x03 ;  // kind = 3 = window scaling
       tcp_opts[10] = 0x03 ; // length = 3
       tcp_opts[11] = 0x02 ; // scale val = 2
+      tcp_opt_len = 12;
+      frame_len = ETH_HDRLEN + IP6_HDR_LEN + eh_len + TCP_HDR_LEN + tcp_opt_len;
+
       // op = (struct packetdata *)(&(tcp_opts[12]));
       break;    
     default:
@@ -684,7 +688,7 @@ int build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacke
 		udphdr->uh_sum = udp_checksum_ipv6((uint16_t *)udphdr, UDP_HDR_LEN + sizeof(struct packetdata), UDP_HDR_LEN + sizeof(struct packetdata), &ip6->ip6_src, &ip6->ip6_dst);
 	}
   if (probe->protocol == IPPROTO_TCP) {
-    tcphdr->check =  tcp_checksum_ipv6(tcphdr, TCP_HDR_LEN, TCP_HDR_LEN, &ip6->ip6_src, &ip6->ip6_dst);
+    tcphdr->check =  tcp_checksum_ipv6(tcphdr, TCP_HDR_LEN + tcp_opt_len, TCP_HDR_LEN + tcp_opt_len, &ip6->ip6_src, &ip6->ip6_dst);
     // tcphdr->check =  tcp_checksum_ipv6(tcphdr, TCP_HDR_LEN + sizeof(struct packetdata), TCP_HDR_LEN + sizeof(struct packetdata), &ip6->ip6_src, &ip6->ip6_dst);
   }
   return frame_len;
