@@ -639,25 +639,21 @@ int build_probe6(struct tr_conf *conf, int seq, u_int8_t hops, uint8_t *outpacke
       tcphdr->window = 5;
       tcphdr->check = 0;
       tcphdr->urg_ptr = 0;
-      proto_len = 20;
-      tcphdr->doff=8;
-      proto_len += 12;
       tcp_opts = (char *) (tcphdr + 1); ;
       tcp_opts[0] = 0x02 ;  // kind = 2 = mss
       tcp_opts[1] = 0x04 ;  // length = 4
-      tcp_opts[2] = 0x05 ;  // mss val = 0x50 = 1280
+      tcp_opts[2] = 0x05 ;  // mss val = 0x05a0 = 1440
       tcp_opts[3] = 0xa0 ;
-      tcp_opts[4] = 0x01 ;  // kind = 1 = fill
-      tcp_opts[5] = 0x01 ;  // kind = 1 = fill
-      tcp_opts[6] = 0x04 ;  // kind = 4 = SACK permitted
-      tcp_opts[7] = 0x02 ;  // length = 2
-      tcp_opts[8] = 0x01 ;  // kind = 1 = fill
-      tcp_opts[9] = 0x03 ;  // kind = 3 = window scaling
-      tcp_opts[10] = 0x03 ; // length = 3
-      tcp_opts[11] = 0x02 ; // scale val = 2
-      tcp_opt_len = 12;
-      frame_len = ETH_HDRLEN + IP6_HDR_LEN + eh_len + TCP_HDR_LEN + tcp_opt_len;
+      tcp_opts[4] = 0x04 ;  // kind = 4 = SACK permitted
+      tcp_opts[5] = 0x02 ;  // length = 2
+      tcp_opts[6] = 0x01 ;  // kind = 1 = fill
+      tcp_opts[7] = 0x00 ;  // End of list
 
+      tcp_opt_len = 8;
+      tcphdr->doff= 5 + tcp_opt_len/4;
+
+      proto_len = TCP_HDR_LEN + tcp_opt_len;
+      frame_len = ETH_HDRLEN + IP6_HDR_LEN + eh_len + proto_len;
       // op = (struct packetdata *)(&(tcp_opts[12]));
       break;    
     default:
