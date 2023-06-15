@@ -76,7 +76,7 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
   struct icmp6_hdr *icmp6_hdr;
   struct tcphdr *tcp_hdr;
   struct tcphdr *emb_tcp_hdr;
-  int eh_len;
+  int eh_len, eh_type;
   int ipv4 = 0;
   int ipv6 = 0;
   char icmp_src_addr_str[INET6_ADDRSTRLEN];
@@ -166,7 +166,9 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
 
     // Are there any extension headers?
     eh_len = 0;
+    eh_type = 0;
     if (emb_ipv6_hdr->ip6_nxt == NEXTHDR_HOP || emb_ipv6_hdr->ip6_nxt == NEXTHDR_DEST) {
+      eh_type = emb_ipv6_hdr->ip6_nxt;
       struct ip6_dest *hbh_hdr = (struct ip6_dest *)(emb_ipv6_hdr + IP6_HDR_LEN);
       eh_len = (hbh_hdr->ip6d_len + 1) * 8;
     }
@@ -192,6 +194,24 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
       orig_ttl = ntohl(emb_ipv6_hdr->ip6_flow) & 0xFF; // Flow label: rightmost 8 bits
       fprintf(ofile, "%d,", orig_ttl);
 
+      // What type of packet was sent out?
+      // TC: TCP
+      // ED: Destination extension header before TCP
+      // EH: Hop by hop extension header before TCP
+      switch (eh_type) {
+        case NEXTHDR_DEST:
+          fprintf(ofile, "ED%d,", eh_len);
+          break;
+        case NEXTHDR_HOP:
+          fprintf(ofile, "EH%d,", eh_len);
+          break;
+        case NEXTHDR_TCP:
+          fprintf(ofile, "TC,");
+          break;
+        default:
+          fprintf(ofile,"??,");
+          break;
+      }
       // IPv6
       // TODO Check crc of original IP address
 
