@@ -166,9 +166,9 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
 
     // Are there any extension headers?
     eh_len = 0;
-    eh_type = 0;
+    eh_type = emb_ipv6_hdr->ip6_nxt;
+
     if (emb_ipv6_hdr->ip6_nxt == NEXTHDR_HOP || emb_ipv6_hdr->ip6_nxt == NEXTHDR_DEST) {
-      eh_type = emb_ipv6_hdr->ip6_nxt;
       struct ip6_dest *hbh_hdr = (struct ip6_dest *)(emb_ipv6_hdr + IP6_HDR_LEN);
       eh_len = (hbh_hdr->ip6d_len + 1) * 8;
     }
@@ -178,7 +178,11 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
       print_ipv6_header((const u_char *)ipv6_hdr);
       print_icmp6_header((const u_char *)icmp6_hdr); // generic icmp6 header
       print_ipv6_header((const u_char *)emb_ipv6_hdr); // embedded IPv6 header in returned packet
-      if (eh_len != 0) printf("EH of length %d\n", eh_len); 
+      if (eh_len != 0) {
+        printf("EH of type %d and length %d\n", eh_type, eh_len);
+      } else {
+        printf("No EH\n");
+      }
       print_tcp_header((const u_char *) emb_tcp_hdr); // embedded TCP header
     }
 
@@ -206,7 +210,7 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
           fprintf(ofile, "EH%d,", eh_len);
           break;
         case NEXTHDR_TCP:
-          fprintf(ofile, "TC,");
+          fprintf(ofile, "TCP,");
           break;
         default:
           fprintf(ofile,"??,");
