@@ -2,3 +2,6 @@
 *bck
 tests/
 *.o
+.DS_Store
+etc.systemd.system.yarrp-listener.service
+etc.systemd.system.yarrp-sender.service
