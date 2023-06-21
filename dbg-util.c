@@ -234,6 +234,7 @@ void print_ipv6_header(const u_char *buffer)
 
 void print_tcp_header(const u_char * buffer)
 {
+    uint8_t *opt_ptr;
     struct tcphdr *tcph=(struct tcphdr*)(buffer);
 
     printf("TCP Header:\n");
@@ -253,6 +254,45 @@ void print_tcp_header(const u_char * buffer)
     printf(" Window         : %d\n",ntohs(tcph->window));
     printf(" Checksum       : %1$d / %1$#04x\n",ntohs(tcph->check));
     printf(" Urgent Pointer : %d\n",tcph->urg_ptr);
+    uint8_t opt_kind;
+    uint8_t opt_len;
+    uint8_t *opt_data;
+    if (tcph->doff > 5) { // There are TCP options
+      printf("TCP Options:\n");
+      opt_ptr = (uint8_t *)buffer + 20;
+      opt_kind = *((uint8_t *) opt_ptr);
+      opt_len = *(((uint8_t *) opt_ptr) + 1);
+      opt_data = (((uint8_t *) opt_ptr) + 2);
+
+      do {
+        switch (opt_kind) {
+          case 0: // End of options
+            printf("End of Options");
+            break;
+          case 1: // No op (padding)
+            printf("No Op/padding\n");
+            break;
+          case 2: // MSS
+            printf("MSS: %d/n", ntohs(*(uint16_t *)opt_data));
+            break;
+          case 3: // Window Scale
+            printf("Window Scale: %d/n", *opt_data);
+            break;
+          case 4: // SACK permitted
+            printf("SACK permitted\n");
+            break;
+          case 5: // SACK
+            printf("SACK: %d\n", opt_len);
+            break;
+          case 8: // Timestamp
+            printf("Timestamp\n");
+            break;
+          default: // Unknown
+            printf("Unknown TCP option\n");
+        }
+        opt_ptr += opt_len;
+      } while (opt_kind != 0);
+    }
 }
 
 void print_tcp_header_with_pseudo_header(const u_char * buffer)

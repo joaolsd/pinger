@@ -389,6 +389,9 @@ int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket
   struct icmp *icmp_pkt = (struct icmp *)(p);
   struct packetdata *op;
   struct timespec ts;
+  int proto_len;
+  int tcp_opt_len;
+  char *tcp_opts;
 
   uint16_t frame_len;
 
@@ -441,9 +444,9 @@ int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket
     }
     tcphdr->seq = htonl(timestamp);
     tcphdr->ack_seq = 0;
-    tcphdr->doff=5;
+    // tcphdr->doff=5;
     tcphdr->fin=0;
-    tcphdr->syn=0;
+    tcphdr->syn=1;
     tcphdr->rst=0;
     tcphdr->psh=0;
     tcphdr->ack=0;
@@ -451,13 +454,28 @@ int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket
     tcphdr->window = 5;
     tcphdr->check = 0;
     tcphdr->urg_ptr = 0;
-    op = (struct packetdata *)(tcphdr + 1);
+
+    tcp_opts = (char *) (tcphdr + 1); ;
+    tcp_opts[0] = 0x02 ;  // kind = 2 = mss
+    tcp_opts[1] = 0x04 ;  // length = 4
+    tcp_opts[2] = 0x05 ;  // mss val = 0x05a0 = 1440
+    tcp_opts[3] = 0xa0 ;
+    tcp_opts[4] = 0x04 ;  // kind = 4 = SACK permitted
+    tcp_opts[5] = 0x02 ;  // length = 2
+    tcp_opts[6] = 0x01 ;  // kind = 1 = fill
+    tcp_opts[7] = 0x00 ;  // End of list
+
+    tcp_opt_len = 8;
+    tcphdr->doff= 5 + tcp_opt_len/4;
+
+    proto_len = TCP_HDR_LEN + tcp_opt_len;
+    frame_len = ETH_HDRLEN + IP6_HDR_LEN + proto_len;
+    // op = (struct packetdata *)(&(tcp_opts[12]));
     break;    
   default:
     op = (struct packetdata *)(ip + 1);
     break;
-  }
-  
+  }  
   ip->version = 4;
   ip->ihl = 5;
 	ip->tos = 0;
@@ -496,7 +514,8 @@ int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket
 		udphdr->uh_sum = udp_checksum_ipv4((uint16_t *)udphdr, UDP_HDR_LEN + sizeof(struct packetdata), UDP_HDR_LEN + sizeof(struct packetdata), (uint32_t *)&ip->saddr, (uint32_t *)&ip->daddr);
 	}
   if (probe->protocol == IPPROTO_TCP) {
-    tcphdr->check =  tcp_checksum_ipv4(tcphdr, TCP_HDR_LEN + sizeof(struct packetdata), TCP_HDR_LEN + sizeof(struct packetdata), &ip->saddr, &ip->daddr);
+    // tcphdr->check =  tcp_checksum_ipv4(tcphdr, TCP_HDR_LEN + sizeof(struct packetdata), TCP_HDR_LEN + sizeof(struct packetdata), &ip->saddr, &ip->daddr);
+    tcphdr->check =  tcp_checksum_ipv4(tcphdr, TCP_HDR_LEN + tcp_opt_len, TCP_HDR_LEN + tcp_opt_len, &ip->saddr, &ip->daddr);
   }
   return frame_len;
 }
