@@ -76,7 +76,7 @@ int debug = 0;
 int ret = 0;
 FILE *log_f;
 
-#define MAX_INPUT_LINES 50000
+#define MAX_INPUT_LINES 90000
 #define MAX_TTL_VALUES 32
 
 struct probe prefixes[MAX_INPUT_LINES];
