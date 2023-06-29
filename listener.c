@@ -76,7 +76,7 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
   struct icmp6_hdr *icmp6_hdr;
   struct tcphdr *tcp_hdr;
   struct tcphdr *emb_tcp_hdr;
-  int eh_len, eh_type;
+  int eh_len, eh_type, o_ttl;
   int ipv4 = 0;
   int ipv6 = 0;
   char icmp_src_addr_str[INET6_ADDRSTRLEN];
@@ -131,11 +131,12 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
       memcpy(&src, &(ipv4_hdr->saddr),4);
       fprintf(ofile, "%s,",inet_ntoa(src));
       // Original TTL, encoded in IP ID field
+      o_ttl = emb_ipv4_hdr->id;
       fprintf(ofile, "%d,", emb_ipv4_hdr->id);
       // Verify checksum for target IP address
       uint16_t target_checksum;
       target_checksum = crc16(0, (uint8_t const *)&(target), 4);
-      if (target_checksum == emb_tcp_hdr->source) {
+      if (target_checksum == emb_tcp_hdr->source - o_ttl) { // subtract ttl value that was added when sending
         fprintf(ofile, "T,");
       } else {
         fprintf(ofile, "F,");

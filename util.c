@@ -422,8 +422,7 @@ int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket
     break;
   case IPPROTO_TCP:
     ip->protocol = IPPROTO_TCP;
-    frame_len = ETH_HDRLEN + IP_HDR_LEN + TCP_HDR_LEN + sizeof(struct packetdata);
-    tcphdr->source = crc16(0, (uint8_t const *)&(ip->daddr), 4); // Source port is a checksum of the destination IP
+    tcphdr->source = crc16(0, (uint8_t const *)&(ip->daddr), 4)+ttl; // Source port is a checksum of the destination IP, add ttl to vary value
     tcphdr->dest = htons(conf->port);
     // Get seconds from top of the hour, including milliseconds
     struct timespec tp;
@@ -465,11 +464,12 @@ int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket
     tcp_opts[6] = 0x01 ;  // kind = 1 = fill
     tcp_opts[7] = 0x00 ;  // End of list
 
-    tcp_opt_len = 8;
+    tcp_opt_len = 8; // bytes
     tcphdr->doff= 5 + tcp_opt_len/4;
 
     proto_len = TCP_HDR_LEN + tcp_opt_len;
-    frame_len = ETH_HDRLEN + IP6_HDR_LEN + proto_len;
+    // frame_len = ETH_HDRLEN + IP_HDR_LEN + TCP_HDR_LEN + sizeof(struct packetdata);
+    frame_len = ETH_HDRLEN + IP_HDR_LEN + proto_len;
     // op = (struct packetdata *)(&(tcp_opts[12]));
     break;    
   default:

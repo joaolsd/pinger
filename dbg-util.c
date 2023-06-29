@@ -257,23 +257,26 @@ void print_tcp_header(const u_char * buffer)
     uint8_t opt_kind;
     uint8_t opt_len;
     uint8_t *opt_data;
+    uint8_t tot_opt_len;
     if (tcph->doff > 5) { // There are TCP options
       printf("TCP Options:\n");
-      opt_ptr = (uint8_t *)buffer + 20;
+      opt_ptr = (uint8_t *)buffer + TCP_HDR_LEN;
       opt_kind = *((uint8_t *) opt_ptr);
-      opt_len = *(((uint8_t *) opt_ptr) + 1);
-      opt_data = (((uint8_t *) opt_ptr) + 2);
-
+      tot_opt_len = tcph->doff * 4 - TCP_HDR_LEN;
       do {
+        opt_len = *(((uint8_t *) opt_ptr) + 1);
+        opt_data = (((uint8_t *) opt_ptr) + 2);
         switch (opt_kind) {
           case 0: // End of options
             printf("End of Options");
+            opt_len = 1;
             break;
           case 1: // No op (padding)
             printf("No Op/padding\n");
+            opt_len = 1;
             break;
           case 2: // MSS
-            printf("MSS: %d/n", ntohs(*(uint16_t *)opt_data));
+            printf("MSS: %d\n", ntohs(*(uint16_t *)opt_data));
             break;
           case 3: // Window Scale
             printf("Window Scale: %d/n", *opt_data);
@@ -291,7 +294,9 @@ void print_tcp_header(const u_char * buffer)
             printf("Unknown TCP option\n");
         }
         opt_ptr += opt_len;
-      } while (opt_kind != 0);
+        tot_opt_len -= opt_len;
+        opt_kind = *((uint8_t *) opt_ptr);
+      } while (opt_kind != 0|| tot_opt_len  == 0);
     }
 }
 

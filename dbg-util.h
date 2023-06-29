@@ -7,3 +7,5 @@ void print_ipv6_header(const u_char *buffer);
 void print_ipv4_header(const u_char *buffer);
 void print_ethernet_header(const u_char *buffer);
 void Hexdump(const void* data, size_t size);
+
+#define TCP_HDR_LEN 20
