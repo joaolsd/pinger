@@ -398,7 +398,7 @@ int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket
   ether_header(4, outpacket);
 
 // Set the IPv4 header ID field to be the value of the TTL (to detect in transit manipulation)
-  ip->id = ttl;
+  ip->id = htons(ttl);
 
   switch (probe->protocol) {
   case IPPROTO_ICMP:

@@ -131,12 +131,12 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
       memcpy(&src, &(ipv4_hdr->saddr),4);
       fprintf(ofile, "%s,",inet_ntoa(src));
       // Original TTL, encoded in IP ID field
-      o_ttl = emb_ipv4_hdr->id;
+      o_ttl = ntohs(emb_ipv4_hdr->id);
       fprintf(ofile, "%d,", emb_ipv4_hdr->id);
 
       // Type of received ICMP
       if (icmp_hdr->type == ICMP_TIME_EXCEEDED) {
-        fprintf(ofile,"HL,");
+        fprintf(ofile,"TE,");
       } else if (icmp_hdr->type == ICMP_DEST_UNREACH) {
         switch (icmp_hdr->code) {
           case ICMP_NET_UNREACH:
@@ -151,6 +151,8 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
           default:
             fprintf(ofile,"U%d,",icmp6_hdr->icmp6_code);
         }
+      } else {
+        fprintf(ofile,"T%d,",icmp_hdr->type);
       }
 
       // Verify checksum for target IP address
@@ -349,7 +351,7 @@ int main (int argc, char * const argv[])
 
   // Open output file if one was given
   if (ofilename != 0) {
-    ofile = fopen(ofilename, "a");
+    ofile = fopen(ofilename, "w");
     if (ofile == NULL) {
       perror("can't open output/log file");
       exit(1);
