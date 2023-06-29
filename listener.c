@@ -133,6 +133,26 @@ void listen_for_icmp(u_char *args, const struct pcap_pkthdr *header, const u_cha
       // Original TTL, encoded in IP ID field
       o_ttl = emb_ipv4_hdr->id;
       fprintf(ofile, "%d,", emb_ipv4_hdr->id);
+
+      // Type of received ICMP
+      if (icmp_hdr->type == ICMP_TIME_EXCEEDED) {
+        fprintf(ofile,"HL,");
+      } else if (icmp_hdr->type == ICMP_DEST_UNREACH) {
+        switch (icmp_hdr->code) {
+          case ICMP_NET_UNREACH:
+            fprintf(ofile,"UN,");
+            break;
+          case ICMP_HOST_UNREACH:
+            fprintf(ofile,"UH,");
+            break;
+          case ICMP_PORT_UNREACH:
+            fprintf(ofile,"UP,");
+            break;
+          default:
+            fprintf(ofile,"U%d,",icmp6_hdr->icmp6_code);
+        }
+      }
+
       // Verify checksum for target IP address
       uint16_t target_checksum;
       target_checksum = crc16(0, (uint8_t const *)&(target), 4);
