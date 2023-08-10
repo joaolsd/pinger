@@ -809,13 +809,17 @@ void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct
     memcpy(sadr_ll.sll_addr, dst_mac_v6, ETH_ALEN);
   }
   
-  len = sendto(sndsock, outpacket, frame_len, 0, (const struct sockaddr*)&sadr_ll, sizeof(struct sockaddr_ll));
-	if (debug) printf("sent %d bytes on socket %d\n", len, sndsock);
-  if (len == -1 || len != frame_len)  {
-    if (len == -1) {
-	    warn("sendto");    	
+  // Send out nprobe copies of the packet (default 1)
+  int i_loop;
+  for (i_loop=0; i_loop<conf->nprobes; i_loop++) {
+    len = sendto(sndsock, outpacket, frame_len, 0, (const struct sockaddr*)&sadr_ll, sizeof(struct sockaddr_ll));
+    if (debug) printf("sent %d bytes on socket %d\n", len, sndsock);
+    if (len == -1 || len != frame_len)  {
+      if (len == -1) {
+        warn("sendto");    	
+      }
+      if (debug) fprintf(log_f, "sendto wrote %d chars, ret=%d\n", len, len);
+      (void) fflush(stdout);
     }
-    if (debug) fprintf(log_f, "sendto wrote %d chars, ret=%d\n", len, len);
-    (void) fflush(stdout);
   }
 }

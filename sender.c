@@ -502,7 +502,7 @@ int main (int argc, char const *argv[])
   conf->proto = IPPROTO_UDP;
   conf->max_ttl = 32;
   // conf->max_ttl = IPDEFTTL;
-  conf->nprobes = 3;
+  conf->nprobes = 1;
   conf->if_name =  "eth0";
 	conf->port = 443;
 	conf->ident = 666;
@@ -526,7 +526,7 @@ int main (int argc, char const *argv[])
   source_v6_str = "2a01:7e01::f03c:91ff:fed5:395"; // testbed-de
   interface = "eth0"; // outgoing interface
 
-  while ((ch = getopt(argc, (char * const *)argv, "4:6:a:b:c:df:hi:l:p:x")) != (char)-1) {
+  while ((ch = getopt(argc, (char * const *)argv, "4:6:a:b:c:df:hi:l:n:p:x")) != (char)-1) {
     // char *optarg;
     switch (ch) {
       case '4':
@@ -577,6 +577,10 @@ int main (int argc, char const *argv[])
       //   break;
       case 'l':
         log_file_name = optarg;
+        break;
+      case 'n':
+        conf->nprobes = atoi(optarg);
+        break;
       case 'p':
         if (strcmp(optarg, "t")) {
           conf->proto = IPPROTO_TCP;
