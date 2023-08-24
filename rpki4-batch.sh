@@ -10,7 +10,7 @@ LISTEN_PID=$!
 tcpdump -nvvvv -w pkts-$HOSTNAME-rpki4-valid.pcap -i $INT "port 443 or icmp[0]==11 or icmp[0]==3" &
 TCPDUMP_PID=$!
 sleep 3
-./sender -f ./rpki4.csv -i $INT -4 $MY_IPV4 -6 $MY_IPV6 -a $MY_MAC -b $DFGW_V4_MAC -c $DFGW_V6_MAC
+./sender -s 1 -f ./rpki4.csv -i $INT -4 $MY_IPV4 -6 $MY_IPV6 -a $MY_MAC -b $DFGW_V4_MAC -c $DFGW_V6_MAC
 sleep 3
 kill $LISTEN_PID
 kill $TCPDUMP_PID
@@ -23,7 +23,7 @@ LISTEN_PID=$!
 tcpdump -nvvvv -w pkts-$HOSTNAME-rpki4-invalid.pcap -i $INT "port 443 or icmp[0]==11 or icmp[0]==3" &
 TCPDUMP_PID=$!
 sleep 3
-./sender -f ./rpki4.csv -i $INT -4 $MY_INVALID_IPV4 -6 $MY_INVALID_IPV6 -a $MY_MAC -b $DFGW_V4_MAC -c $DFGW_V6_MAC
+./sender -s 1 -f ./rpki4.csv -i $INT -4 $MY_INVALID_IPV4 -6 $MY_INVALID_IPV6 -a $MY_MAC -b $DFGW_V4_MAC -c $DFGW_V6_MAC
 sleep 3
 kill $LISTEN_PID
 kill $TCPDUMP_PID

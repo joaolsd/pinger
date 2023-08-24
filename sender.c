@@ -107,6 +107,7 @@ void usage(char *progname) {
   printf("-h: this help\n");
   printf("-i: ethernet interface to use for sending packets\n");
   printf("-p: protocol to use (t:tcp, i:icmp). default is UDP\n");
+  printf("-s: time in milliseconds to wait between sending outgoing packets\n");
   printf("-x: Turn on debugging\n");
 	exit(0);
 }
@@ -506,7 +507,8 @@ int main (int argc, char const *argv[])
   conf->if_name =  "eth0";
 	conf->port = 443;
 	conf->ident = 666;
-	
+	conf->sleep_time = 0;
+
   char *progname = basename((char *)argv[0]);
   
   char *input_f;
@@ -526,7 +528,7 @@ int main (int argc, char const *argv[])
   source_v6_str = "2a01:7e01::f03c:91ff:fed5:395"; // testbed-de
   interface = "eth0"; // outgoing interface
 
-  while ((ch = getopt(argc, (char * const *)argv, "4:6:a:b:c:df:hi:l:n:p:x")) != (char)-1) {
+  while ((ch = getopt(argc, (char * const *)argv, "4:6:a:b:c:df:hi:l:n:p:s:x")) != (char)-1) {
     // char *optarg;
     switch (ch) {
       case '4':
@@ -581,7 +583,15 @@ int main (int argc, char const *argv[])
       case 'n':
         conf->nprobes = atoi(optarg);
         break;
-      case 'p':
+      case 's': // Time in milliseconds
+        conf->sleep_time = atoi(optarg);
+        if (conf->sleep_time <0 || conf->sleep_time >1000) {
+          perror("Millisecond value must be 0<t<1000");
+          exit(1);
+        }
+        conf->sleep_time *= 1000000; // convert to nanoseconds for the nanosleep call
+        break;
+      case 'p': // This can also be a parameter on each data input line (normal usage)
         if (strcmp(optarg, "t")) {
           conf->proto = IPPROTO_TCP;
         } else if (strcmp(optarg, "i")) {

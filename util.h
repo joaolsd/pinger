@@ -24,6 +24,7 @@ struct tr_conf {
 	u_int8_t	max_ttl;	/* Set the maximum TTL / hop limit */
 	u_char		proto;		/* IP payload protocol to use */
 	u_int8_t	nprobes;
+	long 			sleep_time; // nanoseconds between each outgoing packet
 	u_int16_t	port;		/* start udp dest port */
 	int				waittime;	/* time to wait for a response */
 	int				verbose;

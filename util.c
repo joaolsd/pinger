@@ -719,6 +719,10 @@ void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct
   const u_char * p;
   int nxt_header;
 
+  struct timespec sleep;
+  sleep.tv_sec = 0;
+  sleep.tv_nsec = conf->sleep_time;
+
   switch (probe->addr_family) {
   case 4:
     if (debug) printf("IPv4\n");
@@ -821,5 +825,6 @@ void send_probe(struct tr_conf *conf, int sndsock, int seq, u_int8_t ttl, struct
       if (debug) fprintf(log_f, "sendto wrote %d chars, ret=%d\n", len, len);
       (void) fflush(stdout);
     }
+    nanosleep(&sleep, NULL);
   }
 }
