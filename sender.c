@@ -583,13 +583,13 @@ int main (int argc, char const *argv[])
       case 'n':
         conf->nprobes = atoi(optarg);
         break;
-      case 's': // Time in milliseconds
+      case 's': // Time in microseconds
         conf->sleep_time = atoi(optarg);
-        if (conf->sleep_time <0 || conf->sleep_time >1000) {
-          perror("Millisecond value must be 0<t<1000");
+        if (conf->sleep_time <0 || conf->sleep_time >1000000) {
+          perror("microsecond value must be 0<t<1,000,000");
           exit(1);
         }
-        conf->sleep_time *= 1000000; // convert to nanoseconds for the nanosleep call
+        conf->sleep_time *= 1000; // convert to nanoseconds for the nanosleep call
         break;
       case 'p': // This can also be a parameter on each data input line (normal usage)
         if (strcmp(optarg, "t")) {
