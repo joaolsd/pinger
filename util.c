@@ -479,6 +479,9 @@ int build_probe4(struct tr_conf *conf, int seq, u_int8_t ttl, uint8_t *outpacket
   ip->version = 4;
   ip->ihl = 5;
 	ip->tos = 0;
+  if (conf->set_ecn) {
+    ip->tos |= 3; // Set ECN CE bits
+  }
 	ip->tot_len = htons(frame_len - ETH_HDRLEN);
   ip->id = ttl; // store the original TTL here
 	ip->frag_off = 0;

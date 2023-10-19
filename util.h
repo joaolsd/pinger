@@ -26,12 +26,13 @@ struct tr_conf {
 	u_int8_t	nprobes;
 	long 			sleep_time; // nanoseconds between each outgoing packet
 	u_int16_t	port;		/* start udp dest port */
-	int				waittime;	/* time to wait for a response */
-	int				verbose;
-	int 			debug;
 	u_short		ident;
 	char		 *source;
 	char		 *if_name;
+	u_int8_t  set_ecn;
+	int				waittime;	/* time to wait for a response */	
+	int				verbose;
+	int 			debug;
 };
 
 /*

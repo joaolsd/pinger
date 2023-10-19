@@ -508,6 +508,7 @@ int main (int argc, char const *argv[])
 	conf->port = 443;
 	conf->ident = 666;
 	conf->sleep_time = 0;
+  conf->set_ecn = 0;
 
   char *progname = basename((char *)argv[0]);
   
@@ -528,7 +529,7 @@ int main (int argc, char const *argv[])
   source_v6_str = "2a01:7e01::f03c:91ff:fed5:395"; // testbed-de
   interface = "eth0"; // outgoing interface
 
-  while ((ch = getopt(argc, (char * const *)argv, "4:6:a:b:c:df:hi:l:n:p:s:x")) != (char)-1) {
+  while ((ch = getopt(argc, (char * const *)argv, "4:6:a:b:c:def:hi:l:n:p:s:x")) != (char)-1) {
     // char *optarg;
     switch (ch) {
       case '4':
@@ -561,15 +562,11 @@ int main (int argc, char const *argv[])
         }
         dst_mac_set_v6 = 1 ;
         break;
-      case 'h':
-        usage(progname);
-        break;
       case 'd':
         is_daemon = 1;
         break;
-      case 'i':
-        conf->if_name = strdup(optarg);
-        break;
+      case 'e':
+        conf->set_ecn = 1;
       case 'f': // name of input file or socket (if in daemon mode)
         input_f = optarg;
         file_input = 1;
@@ -577,19 +574,17 @@ int main (int argc, char const *argv[])
       // case '6':
       //   v6flag = 1;
       //   break;
+      case 'h':
+        usage(progname);
+        break;
+      case 'i':
+        conf->if_name = strdup(optarg);
+        break;
       case 'l':
         log_file_name = optarg;
         break;
       case 'n':
         conf->nprobes = atoi(optarg);
-        break;
-      case 's': // Time in microseconds
-        conf->sleep_time = atoi(optarg);
-        if (conf->sleep_time <0 || conf->sleep_time >1000000) {
-          perror("microsecond value must be 0<t<1,000,000");
-          exit(1);
-        }
-        conf->sleep_time *= 1000; // convert to nanoseconds for the nanosleep call
         break;
       case 'p': // This can also be a parameter on each data input line (normal usage)
         if (strcmp(optarg, "t")) {
@@ -600,6 +595,14 @@ int main (int argc, char const *argv[])
           perror("Unknown protocol with -p");
           exit(1);
         }
+        break;
+      case 's': // Time in microseconds
+        conf->sleep_time = atoi(optarg);
+        if (conf->sleep_time <0 || conf->sleep_time >1000000) {
+          perror("microsecond value must be 0<t<1,000,000");
+          exit(1);
+        }
+        conf->sleep_time *= 1000; // convert to nanoseconds for the nanosleep call
         break;
       case 'x': // Debug flag
         debug = 1;
